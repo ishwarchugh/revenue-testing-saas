@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Literal
 
+import datetime as dt
 import numpy as np
 import pandas as pd
 from uuid import uuid4
@@ -144,13 +145,37 @@ def mus_sampling(
     return selected
 
 
-def cutoff_testing() -> dict:
+def cutoff_testing(
+    gl_transactions: pd.DataFrame,
+    cutoff_date: dt.date,
+    date_column: str,
+) -> pd.DataFrame:
     """
-    Placeholder for cutoff testing logic (period-end revenue checks).
+    Select up to 5 transactions immediately before and after a cutoff date.
     """
-    return {
-        "name": "cutoff_testing",
-        "status": "not_implemented",
-        "message": "Placeholder function. Implement cutoff testing logic later.",
-    }
+    if date_column not in gl_transactions.columns:
+        raise ValueError(f"gl_transactions must include '{date_column}' column.")
+
+    df = gl_transactions.copy()
+    df[date_column] = pd.to_datetime(df[date_column], errors="coerce")
+
+    cutoff_ts = pd.Timestamp(cutoff_date)
+
+    pre = (
+        df.loc[df[date_column] < cutoff_ts]
+        .sort_values(date_column, ascending=False)
+        .head(5)
+        .copy()
+    )
+    pre["cutoff_position"] = "pre"
+
+    post = (
+        df.loc[df[date_column] > cutoff_ts]
+        .sort_values(date_column, ascending=True)
+        .head(5)
+        .copy()
+    )
+    post["cutoff_position"] = "post"
+
+    return pd.concat([pre, post], ignore_index=True)
 
