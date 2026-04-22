@@ -20,7 +20,10 @@ def run_target_testing() -> dict:
 
 @app.get("/revenue-tests/mus")
 def run_mus_sampling() -> dict:
-    return {"result": mus_sampling()}
+    return {
+        "status": "not_implemented",
+        "message": "mus_sampling now requires a GL DataFrame plus PM/risk inputs. Wire this to an upload/ingestion endpoint next.",
+    }
 
 
 @app.get("/revenue-tests/cutoff")

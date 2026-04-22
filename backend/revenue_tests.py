@@ -2,10 +2,15 @@ from __future__ import annotations
 
 from typing import Literal
 
+import numpy as np
 import pandas as pd
+from uuid import uuid4
 
 
 RiskLevel = Literal["significant", "higher", "lower"]
+ControlRiskLevel = Literal["higher", "lower"]
+SAPLevel = Literal["none", "minimal", "conservative", "persuasive"]
+ConfidenceLevel = Literal[80, 85, 90, 95]
 
 
 def target_testing(
@@ -42,15 +47,101 @@ def target_testing(
     return df.loc[df["amount"] > threshold]
 
 
-def mus_sampling() -> dict:
+def mus_sampling(
+    gl_transactions: pd.DataFrame,
+    performance_materiality: float,
+    inherent_risk: RiskLevel,
+    control_risk: ControlRiskLevel,
+    sap_level: SAPLevel,
+    confidence_level: ConfidenceLevel,
+    *,
+    seed: int = 42,
+) -> pd.DataFrame:
     """
-    Placeholder for Monetary Unit Sampling (MUS) selection logic.
+    Monetary Unit Sampling (MUS) selection using positive amounts only.
+
+    Sample size formula:
+      CEILING((Population Value × Combined Risk Factor) / PM)
+
+    Selection method:
+      - interval = Population Value / Sample Size
+      - pick a random start in [0, interval) using a fixed seed
+      - select items where the cumulative amount crosses each interval point
     """
-    return {
-        "name": "mus_sampling",
-        "status": "not_implemented",
-        "message": "Placeholder function. Implement MUS sampling logic later.",
+    if "amount" not in gl_transactions.columns:
+        raise ValueError("gl_transactions must include an 'amount' column.")
+
+    pm = float(performance_materiality)
+    if not np.isfinite(pm) or pm <= 0:
+        raise ValueError("performance_materiality must be a positive number.")
+
+    inherent_risk_multiplier: dict[str, float] = {
+        "lower": 0.9,
+        "higher": 1.1,
+        "significant": 1.3,
     }
+    control_risk_multiplier: dict[str, float] = {"lower": 0.9, "higher": 1.1}
+    sap_multiplier: dict[str, float] = {
+        "none": 1.3,
+        "minimal": 1.1,
+        "conservative": 1.0,
+        "persuasive": 0.85,
+    }
+    confidence_multiplier: dict[int, float] = {80: 1.0, 85: 1.1, 90: 1.2, 95: 1.3}
+
+    ir = str(inherent_risk).strip().lower()
+    cr = str(control_risk).strip().lower()
+    sap = str(sap_level).strip().lower()
+    cl = int(confidence_level)
+
+    if ir not in inherent_risk_multiplier:
+        raise ValueError(
+            "Invalid inherent_risk. Expected one of: 'significant', 'higher', 'lower'."
+        )
+    if cr not in control_risk_multiplier:
+        raise ValueError("Invalid control_risk. Expected one of: 'higher', 'lower'.")
+    if sap not in sap_multiplier:
+        raise ValueError(
+            "Invalid sap_level. Expected one of: 'none', 'minimal', 'conservative', 'persuasive'."
+        )
+    if cl not in confidence_multiplier:
+        raise ValueError("Invalid confidence_level. Expected one of: 80, 85, 90, 95.")
+
+    combined_risk_factor = (
+        inherent_risk_multiplier[ir]
+        * control_risk_multiplier[cr]
+        * sap_multiplier[sap]
+        * confidence_multiplier[cl]
+    )
+
+    df = gl_transactions.copy()
+    df["amount"] = pd.to_numeric(df["amount"], errors="coerce")
+    population_df = df.loc[df["amount"] > 0].copy()
+    population_value = float(population_df["amount"].sum(skipna=True))
+
+    if not np.isfinite(population_value) or population_value <= 0:
+        out = population_df.iloc[0:0].copy()
+        out["run_id"] = str(uuid4())
+        out["seed"] = int(seed)
+        return out
+
+    sample_size = int(np.ceil((population_value * combined_risk_factor) / pm))
+    sample_size = max(sample_size, 1)
+
+    interval = population_value / sample_size
+    rng = np.random.default_rng(int(seed))
+    start = float(rng.uniform(0, interval))
+    points = start + interval * np.arange(sample_size)
+
+    cumulative = population_df["amount"].cumsum().to_numpy()
+    selected_pos_idx = np.searchsorted(cumulative, points, side="left")
+    selected_pos_idx = np.unique(np.clip(selected_pos_idx, 0, len(population_df) - 1))
+
+    run_id = str(uuid4())
+    selected = population_df.iloc[selected_pos_idx].copy()
+    selected["run_id"] = run_id
+    selected["seed"] = int(seed)
+    return selected
 
 
 def cutoff_testing() -> dict:
