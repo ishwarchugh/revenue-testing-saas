@@ -12,7 +12,10 @@ def health() -> dict:
 
 @app.get("/revenue-tests/target")
 def run_target_testing() -> dict:
-    return {"result": target_testing()}
+    return {
+        "status": "not_implemented",
+        "message": "target_testing now requires a GL DataFrame, performance_materiality, and risk_level. Wire this to an upload/ingestion endpoint next.",
+    }
 
 
 @app.get("/revenue-tests/mus")
