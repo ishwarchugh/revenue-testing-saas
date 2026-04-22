@@ -1,0 +1,8 @@
+# runtime folders
+backend/uploads/
+backend/outputs/
+
+# python artifacts
+__pycache__/
+*.pyc
+
