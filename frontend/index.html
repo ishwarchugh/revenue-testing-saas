@@ -4,10 +4,891 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Revenue Testing SaaS</title>
+    <meta name="description" content="Revenue Testing SaaS — professional audit-focused revenue testing interface." />
+    <style>
+      :root {
+        --navy-950: #07162d;
+        --navy-900: #0a1d3b;
+        --navy-800: #0f2a52;
+        --navy-700: #17366a;
+        --ink: #0b1220;
+        --muted: #4b5563;
+        --border: #d6deea;
+        --panel: #ffffff;
+        --bg: #f6f8fc;
+        --ring: rgba(23, 54, 106, 0.35);
+        --shadow: 0 18px 45px rgba(7, 22, 45, 0.12);
+        --shadow-sm: 0 10px 22px rgba(7, 22, 45, 0.09);
+        --radius: 14px;
+        --radius-sm: 10px;
+        --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+        --sans: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji",
+          "Segoe UI Emoji";
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        height: 100%;
+      }
+
+      body {
+        margin: 0;
+        font-family: var(--sans);
+        color: var(--ink);
+        background: radial-gradient(1200px 420px at 18% 0%, rgba(15, 42, 82, 0.15), transparent 55%),
+          radial-gradient(980px 380px at 86% 6%, rgba(23, 54, 106, 0.14), transparent 60%), var(--bg);
+      }
+
+      a {
+        color: var(--navy-700);
+        text-underline-offset: 2px;
+      }
+
+      .wrap {
+        max-width: 1100px;
+        margin: 0 auto;
+        padding: 28px 18px 54px;
+      }
+
+      .topbar {
+        position: sticky;
+        top: 0;
+        z-index: 10;
+        background: linear-gradient(180deg, rgba(246, 248, 252, 0.95), rgba(246, 248, 252, 0.72));
+        backdrop-filter: blur(10px);
+        border-bottom: 1px solid rgba(214, 222, 234, 0.7);
+      }
+
+      .topbar-inner {
+        max-width: 1100px;
+        margin: 0 auto;
+        padding: 16px 18px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 14px;
+      }
+
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        min-width: 0;
+      }
+
+      .mark {
+        width: 40px;
+        height: 40px;
+        border-radius: 12px;
+        background: linear-gradient(135deg, var(--navy-900), var(--navy-700));
+        box-shadow: 0 14px 30px rgba(10, 29, 59, 0.22);
+        position: relative;
+      }
+
+      .mark:before,
+      .mark:after {
+        content: "";
+        position: absolute;
+        inset: 10px 12px auto auto;
+        width: 14px;
+        height: 14px;
+        border: 2px solid rgba(255, 255, 255, 0.85);
+        border-left: 0;
+        border-bottom: 0;
+        transform: rotate(45deg);
+        border-radius: 2px;
+      }
+
+      .mark:after {
+        inset: auto auto 11px 11px;
+        width: 10px;
+        height: 10px;
+        transform: rotate(0deg);
+        border: 2px solid rgba(255, 255, 255, 0.55);
+        border-right: 0;
+        border-top: 0;
+        border-radius: 2px;
+      }
+
+      .brand-text {
+        display: flex;
+        flex-direction: column;
+        line-height: 1.15;
+        min-width: 0;
+      }
+
+      .brand-title {
+        font-size: 16px;
+        font-weight: 750;
+        letter-spacing: 0.2px;
+        color: var(--navy-950);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+
+      .brand-subtitle {
+        font-size: 12px;
+        color: var(--muted);
+        margin-top: 2px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+
+      .pill {
+        font-size: 12px;
+        color: var(--navy-900);
+        background: rgba(15, 42, 82, 0.08);
+        border: 1px solid rgba(15, 42, 82, 0.14);
+        padding: 7px 10px;
+        border-radius: 999px;
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        white-space: nowrap;
+      }
+
+      .pill strong {
+        font-family: var(--mono);
+        font-size: 11px;
+        letter-spacing: 0.2px;
+        font-weight: 700;
+      }
+
+      .hero {
+        margin-top: 26px;
+        display: grid;
+        grid-template-columns: 1.35fr 0.65fr;
+        gap: 18px;
+        align-items: stretch;
+      }
+
+      .card {
+        background: var(--panel);
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        box-shadow: var(--shadow-sm);
+      }
+
+      .card-header {
+        padding: 18px 18px 10px;
+        border-bottom: 1px solid rgba(214, 222, 234, 0.75);
+      }
+
+      .card-header h2 {
+        margin: 0;
+        font-size: 15px;
+        font-weight: 750;
+        color: var(--navy-950);
+      }
+
+      .card-header p {
+        margin: 8px 0 0;
+        font-size: 13px;
+        color: var(--muted);
+        line-height: 1.45;
+      }
+
+      .card-body {
+        padding: 18px;
+      }
+
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(12, 1fr);
+        gap: 12px;
+      }
+
+      .col-12 {
+        grid-column: span 12;
+      }
+      .col-6 {
+        grid-column: span 6;
+      }
+      .col-4 {
+        grid-column: span 4;
+      }
+
+      label {
+        display: block;
+        font-size: 12px;
+        font-weight: 700;
+        color: var(--navy-950);
+        margin-bottom: 6px;
+      }
+
+      .hint {
+        margin-top: 6px;
+        font-size: 12px;
+        color: var(--muted);
+        line-height: 1.35;
+      }
+
+      input[type="text"],
+      input[type="number"],
+      input[type="date"],
+      select {
+        width: 100%;
+        border: 1px solid var(--border);
+        background: #fff;
+        color: var(--ink);
+        border-radius: 12px;
+        padding: 10px 12px;
+        font-size: 14px;
+        outline: none;
+        transition: box-shadow 120ms ease, border-color 120ms ease, transform 120ms ease;
+      }
+
+      input[type="file"] {
+        width: 100%;
+        border: 1px dashed rgba(15, 42, 82, 0.35);
+        background: rgba(15, 42, 82, 0.04);
+        color: var(--ink);
+        border-radius: 12px;
+        padding: 12px;
+        font-size: 14px;
+        outline: none;
+        transition: box-shadow 120ms ease, border-color 120ms ease;
+      }
+
+      input:focus,
+      select:focus,
+      input[type="file"]:focus {
+        border-color: rgba(23, 54, 106, 0.7);
+        box-shadow: 0 0 0 4px var(--ring);
+      }
+
+      .checkrow {
+        display: flex;
+        align-items: flex-start;
+        gap: 10px;
+        padding: 12px 12px;
+        border-radius: 12px;
+        border: 1px solid rgba(214, 222, 234, 0.85);
+        background: rgba(246, 248, 252, 0.7);
+      }
+
+      .checkrow input[type="checkbox"] {
+        margin-top: 2px;
+        width: 16px;
+        height: 16px;
+        accent-color: var(--navy-800);
+      }
+
+      .checkrow .checktext {
+        display: flex;
+        flex-direction: column;
+        gap: 3px;
+      }
+
+      .checkrow .checktext strong {
+        font-size: 13px;
+        color: var(--navy-950);
+      }
+
+      .checkrow .checktext span {
+        font-size: 12px;
+        color: var(--muted);
+        line-height: 1.35;
+      }
+
+      .actions {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        margin-top: 14px;
+        padding-top: 14px;
+        border-top: 1px solid rgba(214, 222, 234, 0.75);
+      }
+
+      .btn {
+        appearance: none;
+        border: 1px solid rgba(7, 22, 45, 0.18);
+        border-radius: 12px;
+        padding: 11px 14px;
+        font-weight: 750;
+        font-size: 14px;
+        cursor: pointer;
+        transition: transform 120ms ease, box-shadow 120ms ease, background 120ms ease, border-color 120ms ease;
+        user-select: none;
+      }
+
+      .btn-primary {
+        color: #fff;
+        background: linear-gradient(135deg, var(--navy-900), var(--navy-700));
+        border-color: rgba(10, 29, 59, 0.35);
+        box-shadow: 0 14px 30px rgba(10, 29, 59, 0.18);
+      }
+
+      .btn-primary:hover {
+        transform: translateY(-1px);
+        box-shadow: 0 18px 40px rgba(10, 29, 59, 0.22);
+      }
+
+      .btn-primary:disabled {
+        opacity: 0.6;
+        cursor: not-allowed;
+        transform: none;
+        box-shadow: none;
+      }
+
+      .btn-ghost {
+        background: rgba(246, 248, 252, 0.85);
+        color: var(--navy-900);
+      }
+
+      .btn-ghost:hover {
+        border-color: rgba(23, 54, 106, 0.35);
+        box-shadow: 0 12px 26px rgba(7, 22, 45, 0.08);
+        transform: translateY(-1px);
+      }
+
+      .status {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        font-size: 12px;
+        color: var(--muted);
+        line-height: 1.35;
+      }
+
+      .dot {
+        width: 10px;
+        height: 10px;
+        border-radius: 999px;
+        background: rgba(75, 85, 99, 0.4);
+        box-shadow: 0 0 0 4px rgba(75, 85, 99, 0.08);
+      }
+
+      .dot.ok {
+        background: rgba(17, 94, 54, 0.95);
+        box-shadow: 0 0 0 4px rgba(17, 94, 54, 0.1);
+      }
+
+      .dot.warn {
+        background: rgba(180, 83, 9, 0.95);
+        box-shadow: 0 0 0 4px rgba(180, 83, 9, 0.1);
+      }
+
+      .aside {
+        padding: 18px;
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+      }
+
+      .aside h3 {
+        margin: 0;
+        font-size: 14px;
+        font-weight: 800;
+        color: var(--navy-950);
+      }
+
+      .aside ul {
+        margin: 0;
+        padding-left: 18px;
+        color: var(--muted);
+        font-size: 13px;
+        line-height: 1.55;
+      }
+
+      .kpi {
+        display: grid;
+        grid-template-columns: 1fr;
+        gap: 10px;
+        padding: 12px;
+        border-radius: 12px;
+        border: 1px solid rgba(214, 222, 234, 0.85);
+        background: rgba(246, 248, 252, 0.7);
+      }
+
+      .kpi-row {
+        display: flex;
+        justify-content: space-between;
+        gap: 10px;
+        align-items: baseline;
+      }
+
+      .kpi-row span {
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      .kpi-row strong {
+        color: var(--navy-950);
+        font-family: var(--mono);
+        font-size: 12px;
+        letter-spacing: 0.1px;
+      }
+
+      .results {
+        margin-top: 18px;
+      }
+
+      .results .card-body {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+      }
+
+      .banner {
+        border-radius: 12px;
+        border: 1px solid rgba(214, 222, 234, 0.9);
+        background: rgba(246, 248, 252, 0.85);
+        padding: 12px;
+      }
+
+      .banner strong {
+        display: block;
+        font-size: 13px;
+        color: var(--navy-950);
+      }
+
+      .banner span {
+        display: block;
+        margin-top: 4px;
+        font-size: 12px;
+        color: var(--muted);
+        line-height: 1.45;
+      }
+
+      .download {
+        display: none;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        padding: 12px;
+        border-radius: 12px;
+        border: 1px solid rgba(23, 54, 106, 0.22);
+        background: rgba(15, 42, 82, 0.06);
+      }
+
+      .download.visible {
+        display: flex;
+      }
+
+      .download .filemeta {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        min-width: 0;
+      }
+
+      .download .filemeta strong {
+        font-size: 13px;
+        color: var(--navy-950);
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .download .filemeta span {
+        font-size: 12px;
+        color: var(--muted);
+      }
+
+      .download a {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 10px 12px;
+        border-radius: 12px;
+        border: 1px solid rgba(10, 29, 59, 0.25);
+        background: #fff;
+        font-weight: 750;
+        text-decoration: none;
+        white-space: nowrap;
+      }
+
+      .download a:hover {
+        box-shadow: 0 12px 26px rgba(7, 22, 45, 0.1);
+        transform: translateY(-1px);
+      }
+
+      .footer {
+        margin-top: 18px;
+        font-size: 12px;
+        color: var(--muted);
+        text-align: center;
+      }
+
+      @media (max-width: 920px) {
+        .hero {
+          grid-template-columns: 1fr;
+        }
+      }
+
+      @media (max-width: 640px) {
+        .col-6,
+        .col-4 {
+          grid-column: span 12;
+        }
+
+        .actions {
+          flex-direction: column;
+          align-items: stretch;
+        }
+
+        .status {
+          justify-content: center;
+        }
+
+        .download {
+          flex-direction: column;
+          align-items: stretch;
+        }
+
+        .download a {
+          justify-content: center;
+        }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        * {
+          transition: none !important;
+          scroll-behavior: auto !important;
+        }
+      }
+    </style>
   </head>
   <body>
-    <h1>Revenue Testing SaaS</h1>
-    <p>Backend foundation is running. Frontend scaffolding will come next.</p>
+    <header class="topbar" role="banner">
+      <div class="topbar-inner">
+        <div class="brand" aria-label="Product header">
+          <div class="mark" aria-hidden="true"></div>
+          <div class="brand-text">
+            <div class="brand-title">Revenue Testing SaaS</div>
+            <div class="brand-subtitle">Audit-ready revenue testing workflow</div>
+          </div>
+        </div>
+        <div class="pill" title="Environment">
+          <span aria-hidden="true">●</span>
+          <span>Workspace</span>
+          <strong id="envTag">LOCAL</strong>
+        </div>
+      </div>
+    </header>
+
+    <main class="wrap" role="main">
+      <section class="hero" aria-label="Revenue test setup">
+        <div class="card" aria-label="Input parameters">
+          <div class="card-header">
+            <h2>Run revenue testing</h2>
+            <p>
+              Upload your General Ledger extract and specify risk/materiality parameters. When the test completes, you’ll
+              be able to download a results package.
+            </p>
+          </div>
+
+          <div class="card-body">
+            <form id="revenueTestForm" novalidate>
+              <div class="grid">
+                <div class="col-12">
+                  <label for="glFile">GL file (CSV or Excel)</label>
+                  <input
+                    id="glFile"
+                    name="glFile"
+                    type="file"
+                    accept=".csv,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                    required
+                  />
+                  <div class="hint">Accepted formats: <span style="font-family: var(--mono)">.csv</span>, <span style="font-family: var(--mono)">.xls</span>, <span style="font-family: var(--mono)">.xlsx</span></div>
+                </div>
+
+                <div class="col-6">
+                  <label for="performanceMateriality">Performance Materiality</label>
+                  <input
+                    id="performanceMateriality"
+                    name="performanceMateriality"
+                    type="number"
+                    inputmode="decimal"
+                    min="0"
+                    step="0.01"
+                    placeholder="e.g., 250000"
+                    required
+                  />
+                  <div class="hint">Enter the performance materiality amount used for planning.</div>
+                </div>
+
+                <div class="col-6">
+                  <label for="cutoffDate">Cutoff Date</label>
+                  <input id="cutoffDate" name="cutoffDate" type="date" required />
+                  <div class="hint">Transactions will be evaluated relative to this cutoff.</div>
+                </div>
+
+                <div class="col-4">
+                  <label for="inherentRisk">Inherent Risk</label>
+                  <select id="inherentRisk" name="inherentRisk" required>
+                    <option value="" selected disabled>Select…</option>
+                    <option value="significant">Significant</option>
+                    <option value="higher">Higher</option>
+                    <option value="lower">Lower</option>
+                  </select>
+                </div>
+
+                <div class="col-4">
+                  <label for="controlRisk">Control Risk</label>
+                  <select id="controlRisk" name="controlRisk" required>
+                    <option value="" selected disabled>Select…</option>
+                    <option value="higher">Higher</option>
+                    <option value="lower">Lower</option>
+                  </select>
+                </div>
+
+                <div class="col-4">
+                  <label for="sapLevel">SAP Level</label>
+                  <select id="sapLevel" name="sapLevel" required>
+                    <option value="" selected disabled>Select…</option>
+                    <option value="none">None</option>
+                    <option value="minimal">Minimal</option>
+                    <option value="conservative">Conservative</option>
+                    <option value="persuasive">Persuasive</option>
+                  </select>
+                </div>
+
+                <div class="col-6">
+                  <label for="confidenceLevel">Confidence Level</label>
+                  <select id="confidenceLevel" name="confidenceLevel" required>
+                    <option value="" selected disabled>Select…</option>
+                    <option value="80">80%</option>
+                    <option value="85">85%</option>
+                    <option value="90">90%</option>
+                    <option value="95">95%</option>
+                  </select>
+                </div>
+
+                <div class="col-6">
+                  <label>&nbsp;</label>
+                  <div class="checkrow">
+                    <input id="testNegatives" name="testNegatives" type="checkbox" />
+                    <div class="checktext">
+                      <strong>Test Negatives</strong>
+                      <span>Include negative revenue / credit balances in the testing population.</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="actions">
+                <div class="status" aria-live="polite">
+                  <span id="statusDot" class="dot" aria-hidden="true"></span>
+                  <span id="statusText">Ready. Upload a GL file to begin.</span>
+                </div>
+                <div style="display: flex; gap: 10px; flex-wrap: wrap; justify-content: flex-end">
+                  <button class="btn btn-ghost" type="reset" id="resetBtn">Reset</button>
+                  <button class="btn btn-primary" type="submit" id="runBtn" disabled>Run Revenue Test</button>
+                </div>
+              </div>
+            </form>
+          </div>
+        </div>
+
+        <aside class="card" aria-label="Guidance">
+          <div class="aside">
+            <h3>What gets produced</h3>
+            <ul>
+              <li>Population summary and parameter snapshot</li>
+              <li>Sampling/testing outputs aligned to your risk profile</li>
+              <li>Exceptions list suitable for workpaper inclusion</li>
+            </ul>
+            <div class="kpi" aria-label="Run context">
+              <div class="kpi-row">
+                <span>Mode</span>
+                <strong id="modeKpi">Manual</strong>
+              </div>
+              <div class="kpi-row">
+                <span>File</span>
+                <strong id="fileKpi">—</strong>
+              </div>
+              <div class="kpi-row">
+                <span>Last run</span>
+                <strong id="lastRunKpi">—</strong>
+              </div>
+            </div>
+            <div class="hint">
+              When you connect a backend endpoint, this UI can POST the file + parameters and use the returned result URL
+              in the download section.
+            </div>
+          </div>
+        </aside>
+      </section>
+
+      <section class="results" aria-label="Results">
+        <div class="card">
+          <div class="card-header">
+            <h2>Results</h2>
+            <p>When the revenue test completes, a downloadable results package will appear here.</p>
+          </div>
+          <div class="card-body">
+            <div class="banner" id="resultsBanner">
+              <strong id="resultsTitle">No results yet</strong>
+              <span id="resultsDetail">Run a test to generate an audit-ready results package.</span>
+            </div>
+
+            <div class="download" id="downloadRow" role="region" aria-label="Download results" aria-live="polite">
+              <div class="filemeta">
+                <strong id="downloadName">Revenue_Test_Results.xlsx</strong>
+                <span id="downloadMeta">Generated and ready for download.</span>
+              </div>
+              <a id="downloadLink" href="#" download="Revenue_Test_Results.xlsx" aria-disabled="false">
+                <span aria-hidden="true">⬇</span>
+                <span>Download results</span>
+              </a>
+            </div>
+          </div>
+        </div>
+
+        <div class="footer">
+          © <span id="year"></span> Revenue Testing SaaS. Navy/white UI, no external CSS frameworks.
+        </div>
+      </section>
+    </main>
+
+    <script>
+      (function () {
+        const form = document.getElementById("revenueTestForm");
+        const glFile = document.getElementById("glFile");
+        const runBtn = document.getElementById("runBtn");
+        const resetBtn = document.getElementById("resetBtn");
+
+        const statusDot = document.getElementById("statusDot");
+        const statusText = document.getElementById("statusText");
+
+        const fileKpi = document.getElementById("fileKpi");
+        const lastRunKpi = document.getElementById("lastRunKpi");
+        const modeKpi = document.getElementById("modeKpi");
+
+        const resultsTitle = document.getElementById("resultsTitle");
+        const resultsDetail = document.getElementById("resultsDetail");
+        const downloadRow = document.getElementById("downloadRow");
+        const downloadLink = document.getElementById("downloadLink");
+        const downloadName = document.getElementById("downloadName");
+        const downloadMeta = document.getElementById("downloadMeta");
+
+        document.getElementById("year").textContent = String(new Date().getFullYear());
+        document.getElementById("envTag").textContent = "LOCAL";
+
+        function setStatus(kind, text) {
+          statusDot.classList.remove("ok", "warn");
+          if (kind === "ok") statusDot.classList.add("ok");
+          if (kind === "warn") statusDot.classList.add("warn");
+          statusText.textContent = text;
+        }
+
+        function setBusy(isBusy) {
+          runBtn.disabled = isBusy || !glFile.files || glFile.files.length === 0;
+          runBtn.textContent = isBusy ? "Running…" : "Run Revenue Test";
+          modeKpi.textContent = isBusy ? "Processing" : "Manual";
+        }
+
+        function hideResults() {
+          downloadRow.classList.remove("visible");
+          resultsTitle.textContent = "No results yet";
+          resultsDetail.textContent = "Run a test to generate an audit-ready results package.";
+        }
+
+        function showResults(payload) {
+          const suggestedName = payload?.filename || "Revenue_Test_Results.xlsx";
+          const href = payload?.downloadUrl || "#";
+
+          downloadName.textContent = suggestedName;
+          downloadLink.setAttribute("download", suggestedName);
+          downloadLink.href = href;
+          downloadMeta.textContent = payload?.meta || "Generated and ready for download.";
+
+          downloadRow.classList.add("visible");
+          resultsTitle.textContent = "Run complete";
+          resultsDetail.textContent = "Your results package is ready to download.";
+        }
+
+        glFile.addEventListener("change", () => {
+          const file = glFile.files && glFile.files[0] ? glFile.files[0] : null;
+          fileKpi.textContent = file ? file.name : "—";
+          hideResults();
+          setBusy(false);
+
+          if (!file) {
+            setStatus("warn", "Ready. Upload a GL file to begin.");
+            return;
+          }
+
+          const okTypes = [
+            "text/csv",
+            "application/vnd.ms-excel",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+          ];
+          const ext = (file.name.split(".").pop() || "").toLowerCase();
+          const isValidExt = ["csv", "xls", "xlsx"].includes(ext);
+          const isValidType = okTypes.includes(file.type) || file.type === "" || file.type == null;
+
+          if (!isValidExt || !isValidType) {
+            setStatus("warn", "This file type isn’t supported. Please upload a CSV or Excel file.");
+            runBtn.disabled = true;
+            return;
+          }
+
+          setStatus("ok", "File loaded. Review parameters and run the test.");
+          runBtn.disabled = false;
+        });
+
+        resetBtn.addEventListener("click", () => {
+          hideResults();
+          setStatus("warn", "Ready. Upload a GL file to begin.");
+          fileKpi.textContent = "—";
+          lastRunKpi.textContent = "—";
+          setBusy(false);
+        });
+
+        form.addEventListener("submit", async (e) => {
+          e.preventDefault();
+
+          if (!glFile.files || glFile.files.length === 0) {
+            setStatus("warn", "Please upload a GL file before running the test.");
+            return;
+          }
+
+          if (!form.checkValidity()) {
+            setStatus("warn", "Please complete all required fields before running the test.");
+            return;
+          }
+
+          hideResults();
+          setBusy(true);
+          setStatus("ok", "Running revenue test. This may take a moment…");
+
+          const startedAt = new Date();
+          try {
+            // Placeholder: swap this with a real backend call when available.
+            // Expected shape: { downloadUrl: string, filename?: string, meta?: string }
+            await new Promise((r) => setTimeout(r, 950));
+
+            const payload = window.__REVENUE_TEST_RESULT__ || {
+              downloadUrl: "#",
+              filename: "Revenue_Test_Results.xlsx",
+              meta: "Demo link. Connect your backend to return a real download URL.",
+            };
+
+            showResults(payload);
+            lastRunKpi.textContent = startedAt.toLocaleString();
+            setStatus("ok", "Completed. Download the results package below.");
+          } catch (err) {
+            setStatus("warn", "Something went wrong while running the test. Please try again.");
+            hideResults();
+          } finally {
+            setBusy(false);
+          }
+        });
+
+        hideResults();
+        setStatus("warn", "Ready. Upload a GL file to begin.");
+      })();
+    </script>
   </body>
 </html>
 
