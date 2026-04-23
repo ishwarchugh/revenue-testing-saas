@@ -845,6 +845,25 @@
           setBusy(false);
         });
 
+        function getFilenameFromContentDisposition(value) {
+          if (!value) return null;
+          const match = /filename\*?=(?:UTF-8''|")?([^\";]+)"?/i.exec(value);
+          if (!match || !match[1]) return null;
+          try {
+            return decodeURIComponent(match[1]);
+          } catch {
+            return match[1];
+          }
+        }
+
+        function setError(detail) {
+          const msg = detail && String(detail).trim() ? String(detail).trim() : "Something went wrong. Please try again.";
+          resultsTitle.textContent = "Run failed";
+          resultsDetail.textContent = msg;
+          downloadRow.classList.remove("visible");
+          setStatus("warn", msg);
+        }
+
         form.addEventListener("submit", async (e) => {
           e.preventDefault();
 
@@ -864,22 +883,62 @@
 
           const startedAt = new Date();
           try {
-            // Placeholder: swap this with a real backend call when available.
-            // Expected shape: { downloadUrl: string, filename?: string, meta?: string }
-            await new Promise((r) => setTimeout(r, 950));
+            const fd = new FormData();
 
-            const payload = window.__REVENUE_TEST_RESULT__ || {
-              downloadUrl: "#",
-              filename: "Revenue_Test_Results.xlsx",
-              meta: "Demo link. Connect your backend to return a real download URL.",
-            };
+            // File
+            fd.append("gl_file", glFile.files[0]);
 
-            showResults(payload);
+            // Fields (backend expects these exact names)
+            fd.append("performance_materiality", document.getElementById("performanceMateriality").value);
+            fd.append("inherent_risk", document.getElementById("inherentRisk").value);
+            fd.append("control_risk", document.getElementById("controlRisk").value);
+            fd.append("sap_level", document.getElementById("sapLevel").value);
+            fd.append("confidence_level", document.getElementById("confidenceLevel").value);
+            fd.append("cutoff_date", document.getElementById("cutoffDate").value);
+            fd.append("test_negatives", document.getElementById("testNegatives").checked ? "true" : "false");
+
+            const res = await fetch("/upload", { method: "POST", body: fd });
+            if (!res.ok) {
+              let detail = null;
+              const ct = (res.headers.get("content-type") || "").toLowerCase();
+              if (ct.includes("application/json")) {
+                const body = await res.json().catch(() => null);
+                detail = body && body.detail ? body.detail : null;
+              } else {
+                detail = await res.text().catch(() => null);
+              }
+              setError(detail || `Upload failed (HTTP ${res.status}).`);
+              return;
+            }
+
+            const blob = await res.blob();
+            const cd = res.headers.get("content-disposition");
+            const filename = getFilenameFromContentDisposition(cd) || "Revenue_Test_Workpaper.xlsx";
+
+            const url = URL.createObjectURL(blob);
+            downloadLink.href = url;
+            downloadLink.setAttribute("download", filename);
+            downloadName.textContent = filename;
+            downloadMeta.textContent = "Generated and ready for download.";
+            downloadRow.classList.add("visible");
+            resultsTitle.textContent = "Run complete";
+            resultsDetail.textContent = "Your results workpaper has downloaded automatically. You can also download again here.";
+
+            // Auto-download
+            const a = document.createElement("a");
+            a.href = url;
+            a.download = filename;
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+
+            // Cleanup object URL later (keep available for a bit so the visible link works)
+            window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
+
             lastRunKpi.textContent = startedAt.toLocaleString();
-            setStatus("ok", "Completed. Download the results package below.");
+            setStatus("ok", "Completed. Workpaper downloaded.");
           } catch (err) {
-            setStatus("warn", "Something went wrong while running the test. Please try again.");
-            hideResults();
+            setError(err && err.message ? err.message : null);
           } finally {
             setBusy(false);
           }

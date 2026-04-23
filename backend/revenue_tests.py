@@ -56,10 +56,18 @@ def mus_sampling(
     sap_level: SAPLevel,
     confidence_level: ConfidenceLevel,
     *,
+    exclude_invoice_numbers: set[str] | None = None,
+    invoice_col: str = "invoice_number",
     seed: int = 42,
 ) -> pd.DataFrame:
     """
     Monetary Unit Sampling (MUS) selection using positive amounts only.
+
+    Methodology note:
+      When target testing is performed, MUS should typically be performed on the
+      residual population (i.e., total population less target-tested items).
+      You can enforce that by passing a residual `gl_transactions`, or by
+      providing `exclude_invoice_numbers` to filter target-tested items out here.
 
     Sample size formula:
       CEILING((Population Value × Combined Risk Factor) / PM)
@@ -117,6 +125,15 @@ def mus_sampling(
 
     df = gl_transactions.copy()
     df["amount"] = pd.to_numeric(df["amount"], errors="coerce")
+
+    if exclude_invoice_numbers:
+        if invoice_col not in df.columns:
+            raise ValueError(
+                f"invoice_col '{invoice_col}' not found; cannot exclude target-tested items."
+            )
+        exclude = {str(x) for x in exclude_invoice_numbers}
+        df = df.loc[~df[invoice_col].astype(str).isin(exclude)].copy()
+
     population_df = df.loc[df["amount"] > 0].copy()
     population_value = float(population_df["amount"].sum(skipna=True))
 
