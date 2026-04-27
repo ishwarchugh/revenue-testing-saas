@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Literal
 
 import datetime as dt
+import math
 import numpy as np
 import pandas as pd
 from uuid import uuid4
@@ -12,6 +13,111 @@ RiskLevel = Literal["significant", "higher", "lower"]
 ControlRiskLevel = Literal["higher", "lower"]
 SAPLevel = Literal["none", "minimal", "conservative", "persuasive"]
 ConfidenceLevel = Literal[80, 85, 90, 95]
+
+
+def _mus_ria_pct(
+    inherent_risk: RiskLevel,
+    control_risk: ControlRiskLevel,
+    sap_level: SAPLevel,
+) -> float:
+    """
+    Risk of Incorrect Acceptance (RIA) expressed as a percentage.
+
+    Base RIA is determined by inherent + control risk, then adjusted upward
+    (i.e., higher RIA) based on SAP level.
+    """
+    ir = str(inherent_risk).strip().lower()
+    cr = str(control_risk).strip().lower()
+    sap = str(sap_level).strip().lower()
+
+    if ir not in {"significant", "higher", "lower"}:
+        raise ValueError(
+            "Invalid inherent_risk. Expected one of: 'significant', 'higher', 'lower'."
+        )
+    if cr not in {"higher", "lower"}:
+        raise ValueError("Invalid control_risk. Expected one of: 'higher', 'lower'.")
+    if sap not in {"none", "minimal", "conservative", "persuasive"}:
+        raise ValueError(
+            "Invalid sap_level. Expected one of: 'none', 'minimal', 'conservative', 'persuasive'."
+        )
+
+    base_ria_by_ir_cr: dict[tuple[str, str], float] = {
+        ("significant", "higher"): 5.0,
+        ("significant", "lower"): 10.0,
+        ("higher", "higher"): 10.0,
+        ("higher", "lower"): 15.0,
+        ("lower", "higher"): 15.0,
+        ("lower", "lower"): 25.0,
+    }
+    base = base_ria_by_ir_cr[(ir, cr)]
+
+    sap_adj_pct: dict[str, float] = {
+        "none": 0.0,
+        "minimal": 5.0,
+        "conservative": 10.0,
+        "persuasive": 20.0,
+    }
+    return base + sap_adj_pct[sap]
+
+
+def _mus_confidence_factor(ria_pct: float) -> float:
+    """
+    Confidence Factor lookup for *zero expected misstatements* (Poisson-based).
+
+    Uses the AICPA/CaseWare-style lookup table. Values in between thresholds
+    use the next-highest RIA bracket; values above 37% use the 37% factor.
+    """
+    ria = float(ria_pct)
+    if not np.isfinite(ria) or ria <= 0:
+        raise ValueError("RIA% must be a positive finite number.")
+
+    # Thresholds are (max_RIA_pct, confidence_factor)
+    table: list[tuple[float, float]] = [
+        (5.0, 3.00),
+        (10.0, 2.31),
+        (15.0, 1.90),
+        (20.0, 1.61),
+        (25.0, 1.38),
+        (30.0, 1.21),
+        (37.0, 1.00),
+    ]
+
+    for max_ria, cf in table:
+        if ria <= max_ria:
+            return cf
+    return 1.00
+
+
+def mus_sample_size_parameters(
+    *,
+    population_value: float,
+    performance_materiality: float,
+    inherent_risk: RiskLevel,
+    control_risk: ControlRiskLevel,
+    sap_level: SAPLevel,
+) -> dict[str, float | int]:
+    """
+    Industry-standard MUS sample size parameters (zero expected misstatements).
+
+    Sample Size = CEILING((Population Value × Confidence Factor) / Tolerable Misstatement)
+    Tolerable Misstatement = Performance Materiality (input)
+    """
+    pv = float(population_value)
+    tm = float(performance_materiality)
+    if not np.isfinite(tm) or tm <= 0:
+        raise ValueError("performance_materiality must be a positive number.")
+    if not np.isfinite(pv) or pv <= 0:
+        return {"ria_pct": 0.0, "confidence_factor": 0.0, "sample_size": 0}
+
+    ria_pct = _mus_ria_pct(inherent_risk, control_risk, sap_level)
+    confidence_factor = _mus_confidence_factor(ria_pct)
+    sample_size = int(math.ceil((pv * confidence_factor) / tm))
+    sample_size = max(sample_size, 1)
+    return {
+        "ria_pct": float(ria_pct),
+        "confidence_factor": float(confidence_factor),
+        "sample_size": int(sample_size),
+    }
 
 
 def target_testing(
@@ -70,7 +176,13 @@ def mus_sampling(
       providing `exclude_invoice_numbers` to filter target-tested items out here.
 
     Sample size formula:
-      CEILING((Population Value × Combined Risk Factor) / PM)
+      CEILING((Population Value × Confidence Factor) / Tolerable Misstatement)
+
+    Notes:
+      - Tolerable Misstatement = Performance Materiality (input)
+      - Confidence Factor is determined from RIA% using a Poisson-based lookup table
+        assuming zero expected misstatements.
+      - RIA% is determined from Inherent Risk + Control Risk, adjusted upward by SAP.
 
     Selection method:
       - interval = Population Value / Sample Size
@@ -83,45 +195,6 @@ def mus_sampling(
     pm = float(performance_materiality)
     if not np.isfinite(pm) or pm <= 0:
         raise ValueError("performance_materiality must be a positive number.")
-
-    inherent_risk_multiplier: dict[str, float] = {
-        "lower": 0.9,
-        "higher": 1.1,
-        "significant": 1.3,
-    }
-    control_risk_multiplier: dict[str, float] = {"lower": 0.9, "higher": 1.1}
-    sap_multiplier: dict[str, float] = {
-        "none": 1.3,
-        "minimal": 1.1,
-        "conservative": 1.0,
-        "persuasive": 0.85,
-    }
-    confidence_multiplier: dict[int, float] = {80: 1.0, 85: 1.1, 90: 1.2, 95: 1.3}
-
-    ir = str(inherent_risk).strip().lower()
-    cr = str(control_risk).strip().lower()
-    sap = str(sap_level).strip().lower()
-    cl = int(confidence_level)
-
-    if ir not in inherent_risk_multiplier:
-        raise ValueError(
-            "Invalid inherent_risk. Expected one of: 'significant', 'higher', 'lower'."
-        )
-    if cr not in control_risk_multiplier:
-        raise ValueError("Invalid control_risk. Expected one of: 'higher', 'lower'.")
-    if sap not in sap_multiplier:
-        raise ValueError(
-            "Invalid sap_level. Expected one of: 'none', 'minimal', 'conservative', 'persuasive'."
-        )
-    if cl not in confidence_multiplier:
-        raise ValueError("Invalid confidence_level. Expected one of: 80, 85, 90, 95.")
-
-    combined_risk_factor = (
-        inherent_risk_multiplier[ir]
-        * control_risk_multiplier[cr]
-        * sap_multiplier[sap]
-        * confidence_multiplier[cl]
-    )
 
     df = gl_transactions.copy()
     df["amount"] = pd.to_numeric(df["amount"], errors="coerce")
@@ -143,8 +216,14 @@ def mus_sampling(
         out["seed"] = int(seed)
         return out
 
-    sample_size = int(np.ceil((population_value * combined_risk_factor) / pm))
-    sample_size = max(sample_size, 1)
+    params = mus_sample_size_parameters(
+        population_value=population_value,
+        performance_materiality=pm,
+        inherent_risk=inherent_risk,
+        control_risk=control_risk,
+        sap_level=sap_level,
+    )
+    sample_size = int(params["sample_size"])
 
     interval = population_value / sample_size
     rng = np.random.default_rng(int(seed))

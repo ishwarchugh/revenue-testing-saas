@@ -13,7 +13,7 @@ from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 from starlette.responses import StreamingResponse
 
-from .revenue_tests import cutoff_testing, mus_sampling, target_testing
+from .revenue_tests import cutoff_testing, mus_sample_size_parameters, mus_sampling, target_testing
 
 app = FastAPI(title="Revenue Testing SaaS API", version="0.1.0")
 
@@ -170,52 +170,6 @@ def _target_threshold(performance_materiality: float, inherent_risk: str) -> flo
     return float(performance_materiality) * risk_pct_by_level[level]
 
 
-def _mus_risk_factor(
-    inherent_risk: str,
-    control_risk: str,
-    sap_level: str,
-    confidence_level: int,
-) -> float:
-    inherent_risk_multiplier: dict[str, float] = {
-        "lower": 0.9,
-        "higher": 1.1,
-        "significant": 1.3,
-    }
-    control_risk_multiplier: dict[str, float] = {"lower": 0.9, "higher": 1.1}
-    sap_multiplier: dict[str, float] = {
-        "none": 1.3,
-        "minimal": 1.1,
-        "conservative": 1.0,
-        "persuasive": 0.85,
-    }
-    confidence_multiplier: dict[int, float] = {80: 1.0, 85: 1.1, 90: 1.2, 95: 1.3}
-
-    ir = str(inherent_risk).strip().lower()
-    cr = str(control_risk).strip().lower()
-    sap = str(sap_level).strip().lower()
-    cl = int(confidence_level)
-
-    if ir not in inherent_risk_multiplier:
-        raise ValueError(
-            "Invalid inherent_risk. Expected one of: 'significant', 'higher', 'lower'."
-        )
-    if cr not in control_risk_multiplier:
-        raise ValueError("Invalid control_risk. Expected one of: 'higher', 'lower'.")
-    if sap not in sap_multiplier:
-        raise ValueError(
-            "Invalid sap_level. Expected one of: 'none', 'minimal', 'conservative', 'persuasive'."
-        )
-    if cl not in confidence_multiplier:
-        raise ValueError("Invalid confidence_level. Expected one of: 80, 85, 90, 95.")
-
-    return (
-        inherent_risk_multiplier[ir]
-        * control_risk_multiplier[cr]
-        * sap_multiplier[sap]
-        * confidence_multiplier[cl]
-    )
-
-
 def _fmt_title_case(value: str) -> str:
     v = str(value).strip()
     return v[:1].upper() + v[1:] if v else v
@@ -308,6 +262,7 @@ async def upload(
     confidence_level: int = Form(...),
     cutoff_date: dt.date = Form(...),
     test_negatives: str | None = Form(None),
+    enable_target_testing: str | None = Form(None),
 ):
     """
     Accept GL + parameters, run tests, and return an Excel workpaper.
@@ -316,6 +271,7 @@ async def upload(
         gl_df = normalize_gl_columns(await _read_gl_to_df(gl_file))
         run_id = str(uuid4())
         run_dt = dt.datetime.now()
+        enable_target = True if enable_target_testing is None else _coerce_bool(enable_target_testing)
 
         # Normalize population if negatives should be excluded.
         include_negatives = _coerce_bool(test_negatives)
@@ -332,21 +288,25 @@ async def upload(
         invoice_col = "invoice_number"
         customer_col = "customer"
 
-        target_df = target_testing(
-            gl_transactions=df,
-            performance_materiality=float(performance_materiality),
-            risk_level=str(inherent_risk),
-        )
-
-        # Correct MUS methodology: remove target-tested items from population before MUS
-        target_ids = (
-            pd.Series(target_df.get(invoice_col, []))
-            .dropna()
-            .astype(str)
-            .tolist()
-        )
-        target_id_set = set(target_ids)
-        residual_df = df.loc[~df[invoice_col].astype(str).isin(target_id_set)].copy()
+        if enable_target:
+            target_df = target_testing(
+                gl_transactions=df,
+                performance_materiality=float(performance_materiality),
+                risk_level=str(inherent_risk),
+            )
+            # Correct MUS methodology: remove target-tested items from population before MUS
+            target_ids = (
+                pd.Series(target_df.get(invoice_col, []))
+                .dropna()
+                .astype(str)
+                .tolist()
+            )
+            target_id_set = set(target_ids)
+            residual_df = df.loc[~df[invoice_col].astype(str).isin(target_id_set)].copy()
+        else:
+            target_df = df.iloc[0:0].copy()
+            target_id_set = set()
+            residual_df = df.copy()
 
         mus_df = mus_sampling(
             gl_transactions=residual_df,
@@ -355,7 +315,7 @@ async def upload(
             control_risk=str(control_risk),
             sap_level=str(sap_level),
             confidence_level=int(confidence_level),
-            exclude_invoice_numbers=target_id_set,
+            exclude_invoice_numbers=(target_id_set or None),
             invoice_col=invoice_col,
         )
 
@@ -369,26 +329,31 @@ async def upload(
         pm = float(performance_materiality)
         pop_count = int(len(df))
         pop_value = float(df["amount"].sum(skipna=True))
-        threshold_used = float(_target_threshold(pm, inherent_risk))
-        target_tested_value = float(pd.to_numeric(target_df.get("amount"), errors="coerce").sum(skipna=True))
-        residual_pop_value_for_mus = float(residual_df["amount"].sum(skipna=True))
+        threshold_used = float(_target_threshold(pm, inherent_risk)) if enable_target else None
+        target_tested_value = (
+            float(pd.to_numeric(target_df.get("amount"), errors="coerce").sum(skipna=True))
+            if enable_target
+            else 0.0
+        )
+        residual_pop_value_for_mus = float(
+            pd.to_numeric(residual_df.loc[residual_df["amount"] > 0, "amount"], errors="coerce").sum(skipna=True)
+        )
 
         # MUS interval & cumulative values for sampled items
         population_mus = residual_df.loc[residual_df["amount"] > 0].copy()
         population_mus["__cume__"] = population_mus["amount"].cumsum()
-        mus_factor = float(
-            _mus_risk_factor(inherent_risk, control_risk, sap_level, int(confidence_level))
-        )
         pop_value_pos = float(population_mus["amount"].sum(skipna=True))
-        sample_size = 0
-        interval = None
-        if pop_value_pos > 0 and pm > 0:
-            sample_size = int((pop_value_pos * mus_factor + pm - 1e-9) // pm)  # floor-ish
-            # keep consistent with revenue_tests ceil logic
-            import math
-
-            sample_size = max(1, int(math.ceil((pop_value_pos * mus_factor) / pm)))
-            interval = pop_value_pos / sample_size
+        mus_params = mus_sample_size_parameters(
+            population_value=pop_value_pos,
+            performance_materiality=pm,
+            inherent_risk=str(inherent_risk).strip().lower(),
+            control_risk=str(control_risk).strip().lower(),
+            sap_level=str(sap_level).strip().lower(),
+        )
+        ria_pct = float(mus_params["ria_pct"])
+        confidence_factor = float(mus_params["confidence_factor"])
+        sample_size = int(mus_params["sample_size"])
+        interval = (pop_value_pos / sample_size) if sample_size > 0 else None
 
         # Build professional workbook with openpyxl
         wb = Workbook()
@@ -401,12 +366,26 @@ async def upload(
         ws_params["A3"] = "Parameter"
         ws_params["B3"] = "Value"
 
+        mus_formula_text = (
+            "CEILING((Population Value × Confidence Factor) / Tolerable Misstatement)"
+        )
         params_rows = [
             ("Performance Materiality", pm),
+            ("Target Testing", "Enabled" if enable_target else "Disabled"),
+            (
+                "Target Testing Note",
+                None
+                if enable_target
+                else "Target testing not performed - MUS applied to full population",
+            ),
             ("Inherent Risk", _fmt_title_case(inherent_risk)),
             ("Control Risk", _fmt_title_case(control_risk)),
             ("SAP Level", _fmt_title_case(sap_level)),
             ("Confidence Level", int(confidence_level)),
+            ("RIA (Risk of Incorrect Acceptance)", ria_pct / 100.0),
+            ("Confidence Factor (Poisson, 0 expected misstatements)", confidence_factor),
+            ("MUS Sample Size Formula", mus_formula_text),
+            ("MUS Sample Size", sample_size),
             ("Cutoff Date", cutoff_date),
             ("Test Negatives", bool(include_negatives)),
             ("Run ID", run_id),
@@ -414,7 +393,7 @@ async def upload(
             ("Total population count", pop_count),
             ("Total population value", pop_value),
             ("Less Target Tested Value", target_tested_value),
-            ("Residual Population Value used for MUS", residual_pop_value_for_mus),
+            ("Residual Population Value used for MUS (positive amounts)", residual_pop_value_for_mus),
             ("Target testing threshold", threshold_used),
         ]
         for i, (k, v) in enumerate(params_rows, start=4):
@@ -431,10 +410,12 @@ async def upload(
                 "Performance Materiality",
                 "Total population value",
                 "Less Target Tested Value",
-                "Residual Population Value used for MUS",
+                "Residual Population Value used for MUS (positive amounts)",
                 "Target testing threshold",
             }:
                 ws_params.cell(row=r, column=2).number_format = "#,##0.00"
+            if k == "RIA (Risk of Incorrect Acceptance)":
+                ws_params.cell(row=r, column=2).number_format = "0%"
             if k == "Cutoff Date":
                 ws_params.cell(row=r, column=2).number_format = "DD/MM/YYYY"
             if k == "Date/Time of run":
@@ -450,46 +431,68 @@ async def upload(
             "Threshold Used",
             "Reason Selected",
         ]
-        _write_header(ws_target, 1, target_headers)
+        if not enable_target:
+            ws_target.merge_cells(start_row=1, start_column=1, end_row=1, end_column=len(target_headers))
+            note_cell = ws_target.cell(
+                row=1,
+                column=1,
+                value="Target testing not performed - MUS applied to full population",
+            )
+            note_cell.fill = PatternFill("solid", fgColor="0F2A52")
+            note_cell.font = Font(bold=True, color="FFFFFF")
+            note_cell.alignment = Alignment(horizontal="left", vertical="center")
 
-        target_out = target_df.copy()
-        target_out["__reason__"] = "Amount exceeds target testing threshold"
-        for i, row in enumerate(target_out.itertuples(index=False), start=2):
-            inv = getattr(row, invoice_col, None) if hasattr(row, invoice_col) else None
-            dval = getattr(row, date_column, None) if hasattr(row, date_column) else None
-            cust = getattr(row, customer_col, None) if hasattr(row, customer_col) else None
-            amt = getattr(row, "amount", None)
-            ws_target.cell(row=i, column=1, value=inv)
-            ws_target.cell(row=i, column=2, value=(pd.to_datetime(dval).date() if pd.notna(dval) else None))
-            ws_target.cell(row=i, column=3, value=cust)
-            ws_target.cell(row=i, column=4, value=float(amt) if pd.notna(amt) else None)
-            ws_target.cell(row=i, column=5, value=threshold_used)
-            ws_target.cell(row=i, column=6, value="Amount exceeds threshold")
+            _write_header(ws_target, 2, target_headers)
+            _apply_table_style(ws_target, header_row=2, min_col=1, max_col=len(target_headers))
+            ws_target.freeze_panes = "A3"
+            ws_target.auto_filter.ref = f"A2:{get_column_letter(len(target_headers))}2"
+            _auto_fit_columns(ws_target)
+        else:
+            _write_header(ws_target, 1, target_headers)
 
-        # Summary row
-        summary_row = ws_target.max_row + 2
-        ws_target.cell(row=summary_row, column=1, value="Summary").font = Font(bold=True)
-        ws_target.cell(row=summary_row, column=2, value="Count").font = Font(bold=True)
-        ws_target.cell(row=summary_row, column=3, value=int(len(target_out))).font = Font(bold=True)
-        ws_target.cell(row=summary_row, column=4, value="Total value").font = Font(bold=True)
-        total_target_value = float(pd.to_numeric(target_out.get("amount"), errors="coerce").sum(skipna=True))
-        ws_target.cell(row=summary_row, column=5, value=total_target_value).font = Font(bold=True)
-        ws_target.cell(row=summary_row, column=5).number_format = "#,##0.00"
+            target_out = target_df.copy()
+            target_out["__reason__"] = "Amount exceeds target testing threshold"
+            for i, row in enumerate(target_out.itertuples(index=False), start=2):
+                inv = getattr(row, invoice_col, None) if hasattr(row, invoice_col) else None
+                dval = getattr(row, date_column, None) if hasattr(row, date_column) else None
+                cust = getattr(row, customer_col, None) if hasattr(row, customer_col) else None
+                amt = getattr(row, "amount", None)
+                ws_target.cell(row=i, column=1, value=inv)
+                ws_target.cell(row=i, column=2, value=(pd.to_datetime(dval).date() if pd.notna(dval) else None))
+                ws_target.cell(row=i, column=3, value=cust)
+                ws_target.cell(row=i, column=4, value=float(amt) if pd.notna(amt) else None)
+                ws_target.cell(row=i, column=5, value=threshold_used)
+                ws_target.cell(row=i, column=6, value="Amount exceeds threshold")
 
-        _apply_table_style(ws_target, header_row=1, min_col=1, max_col=len(target_headers))
-        ws_target.freeze_panes = "A2"
-        ws_target.auto_filter.ref = f"A1:{get_column_letter(len(target_headers))}1"
-        # Formats
-        for r in range(2, ws_target.max_row + 1):
-            ws_target.cell(row=r, column=2).number_format = "DD/MM/YYYY"
-            ws_target.cell(row=r, column=4).number_format = "#,##0.00"
-            ws_target.cell(row=r, column=5).number_format = "#,##0.00"
-        _auto_fit_columns(ws_target)
+            # Summary row
+            summary_row = ws_target.max_row + 2
+            ws_target.cell(row=summary_row, column=1, value="Summary").font = Font(bold=True)
+            ws_target.cell(row=summary_row, column=2, value="Count").font = Font(bold=True)
+            ws_target.cell(row=summary_row, column=3, value=int(len(target_out))).font = Font(bold=True)
+            ws_target.cell(row=summary_row, column=4, value="Total value").font = Font(bold=True)
+            total_target_value = float(pd.to_numeric(target_out.get("amount"), errors="coerce").sum(skipna=True))
+            ws_target.cell(row=summary_row, column=5, value=total_target_value).font = Font(bold=True)
+            ws_target.cell(row=summary_row, column=5).number_format = "#,##0.00"
+
+            _apply_table_style(ws_target, header_row=1, min_col=1, max_col=len(target_headers))
+            ws_target.freeze_panes = "A2"
+            ws_target.auto_filter.ref = f"A1:{get_column_letter(len(target_headers))}1"
+            # Formats
+            for r in range(2, ws_target.max_row + 1):
+                ws_target.cell(row=r, column=2).number_format = "DD/MM/YYYY"
+                ws_target.cell(row=r, column=4).number_format = "#,##0.00"
+                ws_target.cell(row=r, column=5).number_format = "#,##0.00"
+            _auto_fit_columns(ws_target)
 
         # -------- Sheet 3: MUS Sample --------
         ws_mus = wb.create_sheet("MUS Sample")
         ws_mus.merge_cells(start_row=1, start_column=1, end_row=1, end_column=8)
-        note = ws_mus.cell(row=1, column=1, value="MUS sample drawn from residual population (total less target-tested items).")
+        mus_note = (
+            "MUS sample drawn from residual population (total less target-tested items)."
+            if enable_target
+            else "MUS sample drawn from full population (target testing not performed)."
+        )
+        note = ws_mus.cell(row=1, column=1, value=mus_note)
         note.fill = PatternFill("solid", fgColor="0F2A52")
         note.font = Font(bold=True, color="FFFFFF")
         note.alignment = Alignment(horizontal="left", vertical="center")

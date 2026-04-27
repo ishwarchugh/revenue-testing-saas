@@ -675,6 +675,16 @@
                 </div>
               </div>
 
+              <div class="checkrow" style="margin-top: 12px">
+                <input id="enableTargetTesting" name="enableTargetTesting" type="checkbox" checked />
+                <div class="checktext">
+                  <strong>Enable Target Testing</strong>
+                  <span>
+                    When disabled, target testing is skipped and MUS is applied to the full population.
+                  </span>
+                </div>
+              </div>
+
               <div class="actions">
                 <div class="status" aria-live="polite">
                   <span id="statusDot" class="dot" aria-hidden="true"></span>
@@ -756,6 +766,8 @@
         const glFile = document.getElementById("glFile");
         const runBtn = document.getElementById("runBtn");
         const resetBtn = document.getElementById("resetBtn");
+        const enableTargetTesting = document.getElementById("enableTargetTesting");
+        const inherentRisk = document.getElementById("inherentRisk");
 
         const statusDot = document.getElementById("statusDot");
         const statusText = document.getElementById("statusText");
@@ -872,6 +884,12 @@
             return;
           }
 
+          // Inherent risk is required for MUS RIA even if target testing is disabled.
+          if (!inherentRisk.value) {
+            setStatus("warn", "Please select an Inherent Risk value before running the test.");
+            return;
+          }
+
           if (!form.checkValidity()) {
             setStatus("warn", "Please complete all required fields before running the test.");
             return;
@@ -890,12 +908,13 @@
 
             // Fields (backend expects these exact names)
             fd.append("performance_materiality", document.getElementById("performanceMateriality").value);
-            fd.append("inherent_risk", document.getElementById("inherentRisk").value);
+            fd.append("inherent_risk", inherentRisk.value);
             fd.append("control_risk", document.getElementById("controlRisk").value);
             fd.append("sap_level", document.getElementById("sapLevel").value);
             fd.append("confidence_level", document.getElementById("confidenceLevel").value);
             fd.append("cutoff_date", document.getElementById("cutoffDate").value);
             fd.append("test_negatives", document.getElementById("testNegatives").checked ? "true" : "false");
+            fd.append("enable_target_testing", enableTargetTesting.checked ? "true" : "false");
 
             const res = await fetch("/upload", { method: "POST", body: fd });
             if (!res.ok) {
