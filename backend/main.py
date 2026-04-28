@@ -5,6 +5,7 @@ import io
 import json
 import os
 import re
+import base64
 from uuid import uuid4
 
 import pandas as pd
@@ -94,6 +95,21 @@ def _excel_sheet_to_records(workbook_bytes: bytes, sheet_name: str) -> list[dict
 
 
 def _load_sample_items_from_workpaper(workbook_bytes: bytes) -> list[dict]:
+    banned_tokens = {"sample size", "summary", "total", "count"}
+
+    def looks_like_invoice_ref(raw: object) -> bool:
+        # Only accept real string invoice refs from the sheet (filters numbers/NaN/summary labels).
+        if not isinstance(raw, str):
+            return False
+        s = _norm_inv(raw)
+        if not s:
+            return False
+        low = s.lower()
+        if any(tok in low for tok in banned_tokens):
+            return False
+        # Must start with a letter or number (filters empty bullets, punctuation, etc.)
+        return bool(re.match(r"^[A-Za-z0-9]", s))
+
     items: list[dict] = []
     for sheet in ["MUS Sample", "Target Testing"]:
         try:
@@ -101,9 +117,10 @@ def _load_sample_items_from_workpaper(workbook_bytes: bytes) -> list[dict]:
         except Exception:
             records = []
         for r in records:
-            inv = _norm_inv(r.get("Invoice Number"))
-            if not inv:
+            raw_inv = r.get("Invoice Number")
+            if not looks_like_invoice_ref(raw_inv):
                 continue
+            inv = _norm_inv(raw_inv)
             items.append(
                 {
                     "source_sheet": sheet,
@@ -351,6 +368,61 @@ def _bank_match_for_sample(sample_item: dict, invoice: dict | None, bank_txs: li
         return ("Yes", matches[0].get("date"), "High")
     # Multiple candidates
     return ("Partial", matches[0].get("date"), "Medium")
+
+
+def _add_testing_results_sheet(workpaper_bytes: bytes, results: list[dict]) -> bytes:
+    """
+    Add/replace a 'Testing Results' sheet in the provided workpaper bytes.
+    Styled to match the existing navy header workpaper style.
+    """
+    from openpyxl import load_workbook
+
+    wb = load_workbook(io.BytesIO(workpaper_bytes))
+
+    sheet_name = "Testing Results"
+    if sheet_name in wb.sheetnames:
+        ws_old = wb[sheet_name]
+        wb.remove(ws_old)
+    ws = wb.create_sheet(sheet_name)
+
+    headers = [
+        "Invoice Number",
+        "GL Amount ex GST",
+        "Invoice Amount ex GST",
+        "Variance",
+        "Bank Match",
+        "Bank Receipt Date",
+        "Match Confidence",
+        "Performance Obligation",
+        "Overall Result",
+    ]
+    _write_header(ws, 1, headers)
+
+    # Write rows
+    for i, r in enumerate(results, start=2):
+        ws.cell(row=i, column=1, value=r.get("invoice_number"))
+        ws.cell(row=i, column=2, value=r.get("gl_amount_ex_gst"))
+        ws.cell(row=i, column=3, value=r.get("invoice_amount_ex_gst"))
+        ws.cell(row=i, column=4, value=r.get("variance"))
+        ws.cell(row=i, column=5, value=r.get("bank_match"))
+        ws.cell(row=i, column=6, value=r.get("bank_receipt_date"))
+        ws.cell(row=i, column=7, value=r.get("match_confidence"))
+        ws.cell(row=i, column=8, value=r.get("performance_obligation"))
+        ws.cell(row=i, column=9, value=r.get("overall_result"))
+
+    _apply_table_style(ws, header_row=1, min_col=1, max_col=len(headers))
+    ws.freeze_panes = "A2"
+    ws.auto_filter.ref = f"A1:{get_column_letter(len(headers))}1"
+
+    # Formats
+    for rr in range(2, ws.max_row + 1):
+        for c in (2, 3, 4):
+            ws.cell(row=rr, column=c).number_format = "#,##0.00"
+    _auto_fit_columns(ws)
+
+    out = io.BytesIO()
+    wb.save(out)
+    return out.getvalue()
 
 
 def _to_snake(name: str) -> str:
@@ -1107,7 +1179,11 @@ async def test_documents(
 
             gl_amt = item.get("gl_amount_ex_gst")
             inv_amt_ex = best_inv.get("amount_ex_gst") if best_inv else None
-            variance = (float(inv_amt_ex) - float(gl_amt)) if (inv_amt_ex is not None and gl_amt is not None) else None
+            variance = (
+                round(float(inv_amt_ex) - float(gl_amt), 2)
+                if (inv_amt_ex is not None and gl_amt is not None)
+                else None
+            )
 
             bank_match, bank_date, conf = _bank_match_for_sample(item, best_inv, bank_txs)
 
@@ -1136,12 +1212,18 @@ async def test_documents(
                 }
             )
 
+        final_workpaper_bytes = _add_testing_results_sheet(workpaper_bytes, results)
+
         return {
             "results": results,
             "meta": {
                 "sample_count": len(sample_items),
                 "parsed_invoices": len(parsed_invoices),
                 "bank_transactions": len(bank_txs),
+            },
+            "final_workpaper": {
+                "filename": (workpaper.filename or "Final_Tested_Workpaper.xlsx"),
+                "content_base64": base64.b64encode(final_workpaper_bytes).decode("ascii"),
             },
         }
     except Exception as e:

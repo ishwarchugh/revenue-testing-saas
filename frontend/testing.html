@@ -626,6 +626,22 @@
         let loadedItems = [];
         let aiResults = null;
 
+        const STANDARD_PERF_OPTIONS = [
+          "",
+          "Revenue correctly recognised — goods delivered",
+          "Revenue correctly recognised — services rendered in the period",
+          "Revenue correctly recognised — milestone achieved per contract",
+          "Revenue correctly recognised — performance obligation met per AASB 15",
+          "Revenue correctly recognised — subscription/licence fee for period",
+          "Revenue incorrectly recognised — timing difference identified",
+          "Revenue recognition uncertain — refer to manager",
+          "__CUSTOM__",
+        ];
+
+        function isStandardPerfValue(v) {
+          return STANDARD_PERF_OPTIONS.includes(v);
+        }
+
         function setStatus(kind, text) {
           statusDot.classList.remove("ok", "warn");
           if (kind === "ok") statusDot.classList.add("ok");
@@ -767,6 +783,9 @@
             const bankDate = r.bank_receipt_date || "";
             const overall = r.overall_result || "Exception";
             const perf = r.performance_obligation || "";
+            const perfIsStandard = isStandardPerfValue(perf) && perf !== "__CUSTOM__";
+            const perfSelectValue = perfIsStandard ? perf : perf ? "__CUSTOM__" : "";
+            const perfCustomValue = perfIsStandard ? "" : perf || "";
 
             tr.innerHTML = `
               <td class="mono">${item.invoice_number}</td>
@@ -791,7 +810,41 @@
                 </select>
               </td>
               <td>
-                <input class="cell-input" data-field="performance_obligation" type="text" placeholder="e.g., SaaS subscription" value="${perf || ""}" />
+                <div style="display: grid; gap: 8px">
+                  <select class="cell-select" data-perf="select">
+                    <option value="" ${perfSelectValue === "" ? "selected" : ""}>Select standard comment...</option>
+                    <option value="Revenue correctly recognised — goods delivered" ${
+                      perfSelectValue === "Revenue correctly recognised — goods delivered" ? "selected" : ""
+                    }>Revenue correctly recognised — goods delivered</option>
+                    <option value="Revenue correctly recognised — services rendered in the period" ${
+                      perfSelectValue === "Revenue correctly recognised — services rendered in the period" ? "selected" : ""
+                    }>Revenue correctly recognised — services rendered in the period</option>
+                    <option value="Revenue correctly recognised — milestone achieved per contract" ${
+                      perfSelectValue === "Revenue correctly recognised — milestone achieved per contract" ? "selected" : ""
+                    }>Revenue correctly recognised — milestone achieved per contract</option>
+                    <option value="Revenue correctly recognised — performance obligation met per AASB 15" ${
+                      perfSelectValue === "Revenue correctly recognised — performance obligation met per AASB 15" ? "selected" : ""
+                    }>Revenue correctly recognised — performance obligation met per AASB 15</option>
+                    <option value="Revenue correctly recognised — subscription/licence fee for period" ${
+                      perfSelectValue === "Revenue correctly recognised — subscription/licence fee for period" ? "selected" : ""
+                    }>Revenue correctly recognised — subscription/licence fee for period</option>
+                    <option value="Revenue incorrectly recognised — timing difference identified" ${
+                      perfSelectValue === "Revenue incorrectly recognised — timing difference identified" ? "selected" : ""
+                    }>Revenue incorrectly recognised — timing difference identified</option>
+                    <option value="Revenue recognition uncertain — refer to manager" ${
+                      perfSelectValue === "Revenue recognition uncertain — refer to manager" ? "selected" : ""
+                    }>Revenue recognition uncertain — refer to manager</option>
+                    <option value="__CUSTOM__" ${perfSelectValue === "__CUSTOM__" ? "selected" : ""}>Custom comment</option>
+                  </select>
+                  <input
+                    class="cell-input"
+                    data-perf="custom"
+                    type="text"
+                    placeholder="Enter custom comment…"
+                    value="${perfCustomValue}"
+                    style="${perfSelectValue === "__CUSTOM__" ? "" : "display: none;"}"
+                  />
+                </div>
               </td>
               <td>
                 <select class="cell-select" data-field="overall_result">
@@ -813,6 +866,34 @@
                 aiResults.results[idx][field] = el.value;
                 aiResults.results[idx].overridden = true;
               });
+            });
+
+            // Performance obligation: dropdown + optional custom text, stored into performance_obligation
+            const perfSelect = tr.querySelector('[data-perf="select"]');
+            const perfCustom = tr.querySelector('[data-perf="custom"]');
+            function syncPerfToResults() {
+              if (!aiResults || !Array.isArray(aiResults.results)) return;
+              const inv = item.invoice_number;
+              const idx = aiResults.results.findIndex((x) => String(x.invoice_number || "").trim() === inv);
+              if (idx === -1) return;
+
+              const sel = perfSelect.value;
+              const finalVal = sel === "__CUSTOM__" ? String(perfCustom.value || "").trim() : String(sel || "").trim();
+              aiResults.results[idx].performance_obligation = finalVal;
+              aiResults.results[idx].overridden = true;
+            }
+
+            perfSelect.addEventListener("change", () => {
+              const isCustom = perfSelect.value === "__CUSTOM__";
+              perfCustom.style.display = isCustom ? "" : "none";
+              if (!isCustom) {
+                perfCustom.value = "";
+              }
+              syncPerfToResults();
+            });
+            perfCustom.addEventListener("input", () => {
+              if (perfSelect.value !== "__CUSTOM__") return;
+              syncPerfToResults();
             });
 
             resultsTbody.appendChild(tr);
