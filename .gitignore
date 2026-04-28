@@ -6,3 +6,6 @@ backend/outputs/
 __pycache__/
 *.pyc
 
+# env files (never commit secrets)
+.env
+

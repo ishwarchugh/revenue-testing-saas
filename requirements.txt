@@ -3,4 +3,8 @@ uvicorn
 pandas
 openpyxl
 python-multipart
+python-dotenv
+openai
+azure-ai-documentintelligence
+reportlab
 

@@ -2,9 +2,13 @@ from pathlib import Path
 
 import datetime as dt
 import io
+import json
+import os
+import re
 from uuid import uuid4
 
 import pandas as pd
+from dotenv import load_dotenv
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -14,6 +18,8 @@ from openpyxl.utils import get_column_letter
 from starlette.responses import StreamingResponse
 
 from .revenue_tests import cutoff_testing, mus_sample_size_parameters, mus_sampling, target_testing
+
+load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
 app = FastAPI(title="Revenue Testing SaaS API", version="0.1.0")
 
@@ -29,6 +35,11 @@ def root() -> FileResponse:
     return FileResponse(str(FRONTEND_DIR / "index.html"))
 
 
+@app.get("/testing")
+def testing() -> FileResponse:
+    return FileResponse(str(FRONTEND_DIR / "testing.html"))
+
+
 @app.get("/health")
 def health() -> dict:
     return {"status": "ok"}
@@ -39,6 +50,307 @@ def _coerce_bool(value: str | None) -> bool:
         return False
     v = str(value).strip().lower()
     return v in {"1", "true", "t", "yes", "y", "on"}
+
+
+def _norm_inv(value: object) -> str:
+    return str("" if value is None else value).strip()
+
+
+def _safe_float(value: object) -> float | None:
+    if value is None:
+        return None
+    try:
+        v = float(value)
+        return v
+    except Exception:
+        return None
+
+
+def _excel_sheet_to_records(workbook_bytes: bytes, sheet_name: str) -> list[dict]:
+    """
+    Read a sheet into records, auto-detecting the header row by searching for 'Invoice Number'.
+    This handles the generated workpaper format where some sheets have a note row above headers.
+    """
+    df_raw = pd.read_excel(io.BytesIO(workbook_bytes), sheet_name=sheet_name, header=None)
+    if df_raw is None or df_raw.empty:
+        return []
+
+    header_row_idx: int | None = None
+    for i in range(min(len(df_raw.index), 30)):
+        row_vals = df_raw.iloc[i].tolist()
+        if any(str(v).strip().lower() == "invoice number" for v in row_vals if v is not None):
+            header_row_idx = i
+            break
+    if header_row_idx is None:
+        return []
+
+    headers = [str(v).strip() if v is not None else "" for v in df_raw.iloc[header_row_idx].tolist()]
+    df = df_raw.iloc[header_row_idx + 1 :].copy()
+    df.columns = headers
+    df = df.dropna(how="all")
+    if df.empty:
+        return []
+    return df.to_dict(orient="records")
+
+
+def _load_sample_items_from_workpaper(workbook_bytes: bytes) -> list[dict]:
+    items: list[dict] = []
+    for sheet in ["MUS Sample", "Target Testing"]:
+        try:
+            records = _excel_sheet_to_records(workbook_bytes, sheet)
+        except Exception:
+            records = []
+        for r in records:
+            inv = _norm_inv(r.get("Invoice Number"))
+            if not inv:
+                continue
+            items.append(
+                {
+                    "source_sheet": sheet,
+                    "invoice_number": inv,
+                    "gl_amount_ex_gst": _safe_float(r.get("Amount")),
+                    "date": r.get("Date"),
+                    "customer": r.get("Customer"),
+                }
+            )
+
+    # De-duplicate by invoice number
+    out: list[dict] = []
+    seen: set[str] = set()
+    for it in items:
+        k = it["invoice_number"]
+        if k in seen:
+            continue
+        seen.add(k)
+        out.append(it)
+    return out
+
+
+def _azure_document_intelligence_client():
+    endpoint = os.getenv("AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT")
+    key = os.getenv("AZURE_DOCUMENT_INTELLIGENCE_KEY")
+    if not endpoint or "your_endpoint_here" in endpoint:
+        raise RuntimeError("AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT is missing or still set to placeholder.")
+    if not key or "your_key_here" in key:
+        raise RuntimeError("AZURE_DOCUMENT_INTELLIGENCE_KEY is missing or still set to placeholder.")
+
+    try:
+        from azure.ai.documentintelligence import DocumentIntelligenceClient
+        from azure.core.credentials import AzureKeyCredential
+    except Exception as e:  # pragma: no cover
+        raise RuntimeError(
+            "Azure Document Intelligence SDK not installed. Install: pip install azure-ai-documentintelligence"
+        ) from e
+
+    return DocumentIntelligenceClient(endpoint=endpoint, credential=AzureKeyCredential(key))
+
+
+def _extract_text_with_azure_di(client, file_bytes: bytes) -> str:
+    """
+    Extract text using Azure Document Intelligence prebuilt-read.
+    """
+    # Newer SDKs support 'analyze_document' / begin_analyze_document with bytes.
+    poller = None
+    try:
+        poller = client.begin_analyze_document("prebuilt-read", file_bytes)
+    except TypeError:
+        try:
+            from azure.ai.documentintelligence.models import AnalyzeDocumentRequest
+
+            poller = client.begin_analyze_document(
+                "prebuilt-read", AnalyzeDocumentRequest(bytes_source=file_bytes)
+            )
+        except Exception:
+            poller = client.begin_analyze_document("prebuilt-read", document=file_bytes)
+
+    result = poller.result()
+
+    chunks: list[str] = []
+    content = getattr(result, "content", None)
+    if content:
+        return str(content)
+
+    pages = getattr(result, "pages", None) or []
+    for page in pages:
+        lines = getattr(page, "lines", None) or []
+        for line in lines:
+            txt = getattr(line, "content", None)
+            if txt:
+                chunks.append(str(txt))
+    return "\n".join(chunks).strip()
+
+
+def _openai_client():
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key or "your_openai_key_here" in api_key:
+        raise RuntimeError("OPENAI_API_KEY is missing or still set to placeholder.")
+    try:
+        from openai import OpenAI
+    except Exception as e:  # pragma: no cover
+        raise RuntimeError("OpenAI SDK not installed. Install: pip install openai") from e
+    return OpenAI(api_key=api_key)
+
+
+def _extract_invoice_fields_openai(client, invoice_text: str) -> dict:
+    invoice_text = (invoice_text or "").strip()
+    if not invoice_text:
+        return {
+            "invoice_number": None,
+            "amount_inc_gst": None,
+            "date": None,
+            "customer": None,
+            "description": None,
+        }
+
+    system = (
+        "You extract structured invoice fields from OCR text. "
+        "Return ONLY valid JSON. If a field is not present, use null."
+    )
+    user = (
+        "Extract these fields from the invoice text:\n"
+        "- invoice_number (string)\n"
+        "- amount_inc_gst (number)\n"
+        "- date (YYYY-MM-DD if possible)\n"
+        "- customer (string)\n"
+        "- description (string short)\n\n"
+        f"INVOICE TEXT:\n{invoice_text[:20000]}"
+    )
+    resp = client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[
+            {"role": "system", "content": system},
+            {"role": "user", "content": user},
+        ],
+        response_format={"type": "json_object"},
+    )
+    raw = (resp.choices[0].message.content or "").strip()
+    data = json.loads(raw) if raw else {}
+
+    # Normalize / coerce
+    inv = _norm_inv(data.get("invoice_number"))
+    inv = inv or None
+    amt = data.get("amount_inc_gst")
+    try:
+        amt = float(amt) if amt is not None else None
+    except Exception:
+        amt = None
+    return {
+        "invoice_number": inv,
+        "amount_inc_gst": amt,
+        "date": data.get("date") or None,
+        "customer": _norm_inv(data.get("customer")) or None,
+        "description": _norm_inv(data.get("description")) or None,
+    }
+
+
+def _extract_bank_transactions_openai(client, bank_text: str) -> list[dict]:
+    bank_text = (bank_text or "").strip()
+    if not bank_text:
+        return []
+
+    system = (
+        "You extract bank statement transactions from OCR text. Return ONLY valid JSON.\n"
+        "Output format: {\"transactions\": [{\"date\": \"YYYY-MM-DD\", \"description\": \"...\", \"amount\": number}]}\n"
+        "Amounts should be positive for receipts/credits where possible; if unknown sign, keep as-is."
+    )
+    user = f"BANK STATEMENT TEXT:\n{bank_text[:25000]}"
+    resp = client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[
+            {"role": "system", "content": system},
+            {"role": "user", "content": user},
+        ],
+        response_format={"type": "json_object"},
+    )
+    raw = (resp.choices[0].message.content or "").strip()
+    data = json.loads(raw) if raw else {}
+    txs = data.get("transactions") or []
+    out: list[dict] = []
+    for t in txs:
+        if not isinstance(t, dict):
+            continue
+        amt = t.get("amount")
+        try:
+            amt = float(amt) if amt is not None else None
+        except Exception:
+            amt = None
+        out.append(
+            {
+                "date": _norm_inv(t.get("date")) or None,
+                "description": _norm_inv(t.get("description")) or None,
+                "amount": amt,
+            }
+        )
+    return out
+
+
+def _choose_best_invoice(sample_item: dict, invoices: list[dict]) -> dict | None:
+    inv_key = _norm_inv(sample_item.get("invoice_number")).lower()
+    if not inv_key:
+        return None
+    candidates = [x for x in invoices if _norm_inv(x.get("invoice_number")).lower() == inv_key]
+    if not candidates:
+        return None
+    if len(candidates) == 1:
+        return candidates[0]
+
+    gl_amt = sample_item.get("gl_amount_ex_gst")
+    if gl_amt is None:
+        return candidates[0]
+
+    def score(x: dict) -> float:
+        ex = x.get("amount_ex_gst")
+        if ex is None:
+            return float("inf")
+        return abs(float(ex) - float(gl_amt))
+
+    return sorted(candidates, key=score)[0]
+
+
+def _bank_match_for_sample(sample_item: dict, invoice: dict | None, bank_txs: list[dict]) -> tuple[str, str | None, str]:
+    """
+    Returns (bank_match, bank_receipt_date, confidence)
+    """
+    if invoice is None:
+        return ("No", None, "Low")
+
+    amount_inc = invoice.get("amount_inc_gst")
+    inv_date = invoice.get("date")
+    customer = _norm_inv(invoice.get("customer") or sample_item.get("customer") or "")
+
+    if amount_inc is None or not bank_txs:
+        return ("No", None, "Low")
+
+    cust_tokens = [t for t in re.split(r"[^A-Za-z0-9]+", customer.lower()) if len(t) >= 4]
+
+    # Basic matching rules per requirement
+    matches: list[dict] = []
+    for tx in bank_txs:
+        amt = tx.get("amount")
+        if amt is None:
+            continue
+        if abs(float(amt) - float(amount_inc)) > 0.01:
+            continue
+        desc = _norm_inv(tx.get("description")).lower()
+        if cust_tokens and not any(tok in desc for tok in cust_tokens[:5]):
+            continue
+        # Date window
+        if inv_date and tx.get("date"):
+            try:
+                d1 = pd.to_datetime(inv_date).date()
+                d2 = pd.to_datetime(tx.get("date")).date()
+                if abs((d2 - d1).days) > 45:
+                    continue
+            except Exception:
+                pass
+        matches.append(tx)
+
+    if not matches:
+        return ("No", None, "Low")
+    if len(matches) == 1:
+        return ("Yes", matches[0].get("date"), "High")
+    # Multiple candidates
+    return ("Partial", matches[0].get("date"), "Medium")
 
 
 def _to_snake(name: str) -> str:
@@ -738,4 +1050,100 @@ def run_cutoff_testing() -> dict:
         "status": "not_implemented",
         "message": "cutoff_testing now requires a GL DataFrame, cutoff_date, and a date column. Wire this to the /upload endpoint.",
     }
+
+
+@app.post("/test-documents")
+async def test_documents(
+    workpaper: UploadFile = File(...),
+    invoices: list[UploadFile] = File(...),
+    bank_statement: UploadFile = File(...),
+) -> dict:
+    """
+    Accepts the workpaper Excel, invoice PDFs (batch), and a bank statement PDF.
+    Extracts text with Azure Document Intelligence, extracts structured fields with OpenAI,
+    matches invoices to GL sample items, then matches bank receipts, and returns JSON results.
+    """
+    try:
+        workpaper_bytes = await workpaper.read()
+        if not workpaper_bytes:
+            raise ValueError("Workpaper file is empty.")
+        sample_items = _load_sample_items_from_workpaper(workpaper_bytes)
+        if not sample_items:
+            raise ValueError(
+                "No sample items found in workpaper. Ensure 'MUS Sample'/'Target Testing' include an 'Invoice Number' column."
+            )
+
+        invoice_files = invoices or []
+        if len(invoice_files) == 0:
+            raise ValueError("No invoice PDFs uploaded.")
+
+        bank_bytes = await bank_statement.read()
+        if not bank_bytes:
+            raise ValueError("Bank statement file is empty.")
+
+        di_client = _azure_document_intelligence_client()
+        oai = _openai_client()
+
+        # Extract + parse invoice fields
+        parsed_invoices: list[dict] = []
+        for f in invoice_files:
+            b = await f.read()
+            if not b:
+                continue
+            text = _extract_text_with_azure_di(di_client, b)
+            fields = _extract_invoice_fields_openai(oai, text)
+            amt_inc = fields.get("amount_inc_gst")
+            fields["amount_ex_gst"] = (float(amt_inc) / 1.1) if amt_inc is not None else None
+            fields["source_filename"] = f.filename
+            parsed_invoices.append(fields)
+
+        # Extract bank statement txns
+        bank_text = _extract_text_with_azure_di(di_client, bank_bytes)
+        bank_txs = _extract_bank_transactions_openai(oai, bank_text)
+
+        results: list[dict] = []
+        for item in sample_items:
+            best_inv = _choose_best_invoice(item, parsed_invoices)
+
+            gl_amt = item.get("gl_amount_ex_gst")
+            inv_amt_ex = best_inv.get("amount_ex_gst") if best_inv else None
+            variance = (float(inv_amt_ex) - float(gl_amt)) if (inv_amt_ex is not None and gl_amt is not None) else None
+
+            bank_match, bank_date, conf = _bank_match_for_sample(item, best_inv, bank_txs)
+
+            overall = "Exception"
+            if best_inv and inv_amt_ex is not None and gl_amt is not None:
+                if abs(float(inv_amt_ex) - float(gl_amt)) <= 0.01 and bank_match in {"Yes", "Partial"}:
+                    overall = "Pass"
+                elif bank_match == "No":
+                    overall = "Exception"
+                else:
+                    overall = "Exception"
+
+            results.append(
+                {
+                    "invoice_number": item.get("invoice_number"),
+                    "gl_amount_ex_gst": gl_amt,
+                    "invoice_amount_ex_gst": inv_amt_ex,
+                    "variance": variance,
+                    "bank_match": bank_match,
+                    "bank_receipt_date": bank_date,
+                    "match_confidence": conf,
+                    "performance_obligation": "",
+                    "overall_result": overall,
+                    "matched_invoice_source": (best_inv.get("source_filename") if best_inv else None),
+                    "overridden": False,
+                }
+            )
+
+        return {
+            "results": results,
+            "meta": {
+                "sample_count": len(sample_items),
+                "parsed_invoices": len(parsed_invoices),
+                "bank_transactions": len(bank_txs),
+            },
+        }
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
 
