@@ -269,6 +269,23 @@ async def upload(
     """
     try:
         gl_df = normalize_gl_columns(await _read_gl_to_df(gl_file))
+
+        # Clean key fields immediately after normalization (before any other processing).
+        amt = gl_df["amount"].astype(str)
+        amt = amt.str.strip()
+        amt = amt.str.replace(r"(?i)\bAUD\b", "", regex=True)
+        amt = amt.str.replace(r"[\$£€]", "", regex=True)
+        amt = amt.str.replace(",", "", regex=False)
+        gl_df["amount"] = pd.to_numeric(amt, errors="coerce")
+
+        cust = gl_df["customer"].astype(str)
+        cust = cust.str.replace(r"[\\\s]+$", "", regex=True)
+        gl_df["customer"] = cust
+
+        print("=== /upload: GL after normalize_gl_columns() + cleaning ===")
+        print("Columns:", list(gl_df.columns))
+        print("First 3 rows:\n", gl_df.head(3).to_string(index=False))
+        print("Column dtypes:\n", gl_df.dtypes.astype(str).to_string())
         run_id = str(uuid4())
         run_dt = dt.datetime.now()
         enable_target = True if enable_target_testing is None else _coerce_bool(enable_target_testing)
