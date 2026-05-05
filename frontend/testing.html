@@ -380,7 +380,7 @@
       table {
         width: 100%;
         border-collapse: collapse;
-        min-width: 1100px;
+        min-width: 3200px;
       }
 
       thead th {
@@ -404,6 +404,39 @@
 
       tbody tr:hover td {
         background: rgba(15, 42, 82, 0.03);
+      }
+
+      .pill-rcpt {
+        display: inline-block;
+        padding: 4px 10px;
+        border-radius: 999px;
+        font-size: 12px;
+        font-weight: 600;
+      }
+      .rcpt-exact {
+        background: #e8f5e9;
+        color: #1b5e20;
+      }
+      .rcpt-over {
+        background: #fff8e1;
+        color: #f57f17;
+      }
+      .rcpt-under {
+        background: #ffebee;
+        color: #c62828;
+      }
+      .rcpt-none {
+        background: #f5f5f5;
+        color: #757575;
+      }
+
+      .th-sub {
+        display: block;
+        font-weight: 400;
+        font-size: 11px;
+        color: var(--muted);
+        margin-top: 2px;
+        white-space: normal;
       }
 
       .mono {
@@ -492,8 +525,8 @@
           <div class="card-header">
             <h2>AI testing workflow</h2>
             <p>
-              Upload the workpaper from the sampling run, then upload invoices (batch) and a bank statement. Run AI testing
-              to populate results you can override before generating a final workpaper.
+              Upload the workpaper from the sampling run, then invoices (batch), optional remittance advices (batch), and bank
+              statements. Run AI testing to populate results you can override before generating a final workpaper.
             </p>
           </div>
           <div class="card-body">
@@ -511,9 +544,15 @@
               </div>
 
               <div>
-                <label for="bankFile">Bank statement (single PDF)</label>
-                <input id="bankFile" type="file" accept="application/pdf,.pdf" />
-                <div class="hint">Upload one PDF bank statement for receipts matching.</div>
+                <label for="remittanceFiles">Remittance Advices (PDF batch) — Optional</label>
+                <input id="remittanceFiles" type="file" accept="application/pdf,.pdf" multiple />
+                <div class="hint">Upload remittance advices separately from invoices</div>
+              </div>
+
+              <div>
+                <label for="bankFile">Bank statements (PDF)</label>
+                <input id="bankFile" type="file" accept="application/pdf,.pdf" multiple />
+                <div class="hint">Upload one or more PDFs (e.g. Jan–Mar and Apr–Jun); all transactions are merged for matching.</div>
               </div>
             </div>
 
@@ -539,6 +578,7 @@
             <div style="display: flex; gap: 10px; flex-wrap: wrap">
               <span class="pill-small"><strong class="mono" id="kpiCount">0</strong>&nbsp;items</span>
               <span class="pill-small">Invoices: <strong class="mono" id="kpiInvoices">0</strong></span>
+              <span class="pill-small">Remittance PDFs: <strong class="mono" id="kpiRemit">0</strong></span>
               <span class="pill-small">Bank: <strong class="mono" id="kpiBank">—</strong></span>
             </div>
             <div class="hint" style="margin-top: 10px">
@@ -564,20 +604,43 @@
               <table>
                 <thead>
                   <tr>
-                    <th>Invoice Number</th>
+                    <th>Invoice Number (GL)</th>
                     <th>GL Amount (ex GST)</th>
-                    <th>Invoice Amount (ex GST)</th>
-                    <th>Variance</th>
+                    <th>GL Date</th>
+                    <th>GL Customer</th>
+                    <th>Invoice Number Extracted</th>
+                    <th>Invoice Date Extracted</th>
+                    <th>Invoice Customer Extracted</th>
+                    <th>
+                      Invoice Amount ex GST
+                      <span class="th-sub">Basis: invoice SubTotal / OCR / inc GST ÷ 1.1</span>
+                    </th>
+                    <th>
+                      Invoice GST Amount
+                      <span class="th-sub">Basis: TotalTax field, or inc GST − ex GST</span>
+                    </th>
+                    <th>Invoice Total (inc GST)</th>
+                    <th>
+                      GST check
+                      <span class="th-sub">Flag when inc GST ÷ ex GST differs from 1.1 by more than 5%</span>
+                    </th>
+                    <th>Amount Variance</th>
+                    <th>Line Items Summary</th>
                     <th>Bank Match</th>
                     <th>Bank Receipt Date</th>
+                    <th>Bank Description</th>
+                    <th>Bank Credit Amount</th>
+                    <th>Bank Receipt vs Invoice</th>
+                    <th>Document Type</th>
                     <th>Match Confidence</th>
                     <th>Performance Obligation</th>
-                    <th>Overall Result</th>
+                    <th>Overall Result (Pass/Fail/Exception)</th>
+                    <th>Auditor Notes</th>
                   </tr>
                 </thead>
                 <tbody id="resultsTbody">
                   <tr>
-                    <td colspan="9" style="color: var(--muted); font-size: 13px">
+                    <td colspan="23" style="color: var(--muted); font-size: 13px">
                       Upload a workpaper to load sample items.
                     </td>
                   </tr>
@@ -607,6 +670,7 @@
 
         const workpaperFile = document.getElementById("workpaperFile");
         const invoiceFiles = document.getElementById("invoiceFiles");
+        const remittanceFiles = document.getElementById("remittanceFiles");
         const bankFile = document.getElementById("bankFile");
         const runAiBtn = document.getElementById("runAiBtn");
         const clearBtn = document.getElementById("clearBtn");
@@ -617,6 +681,7 @@
 
         const kpiCount = document.getElementById("kpiCount");
         const kpiInvoices = document.getElementById("kpiInvoices");
+        const kpiRemit = document.getElementById("kpiRemit");
         const kpiBank = document.getElementById("kpiBank");
 
         const resultsTbody = document.getElementById("resultsTbody");
@@ -663,7 +728,7 @@
             invoiceFiles.files &&
             invoiceFiles.files.length > 0 &&
             bankFile.files &&
-            bankFile.files.length === 1
+            bankFile.files.length >= 1
           );
         }
 
@@ -674,6 +739,36 @@
           } catch {
             return String(n);
           }
+        }
+
+        function escAttr(s) {
+          if (s == null) return "";
+          return String(s)
+            .replace(/&/g, "&amp;")
+            .replace(/"/g, "&quot;")
+            .replace(/</g, "&lt;")
+            .replace(/>/g, "&gt;");
+        }
+
+        function formatDate(d) {
+          if (!d) return "";
+          if (d.includes("-") && d.length === 10) {
+            const parts = d.split("-");
+            return parts[2] + "/" + parts[1] + "/" + parts[0];
+          }
+          return d;
+        }
+
+        function displayDatePlain(v) {
+          if (v == null || v === "") return "—";
+          return escAttr(formatDate(String(v)));
+        }
+
+        function receiptVsPill(v) {
+          const raw = v || "No Match";
+          const cls =
+            raw === "Exact" ? "rcpt-exact" : raw === "Over" ? "rcpt-over" : raw === "Under" ? "rcpt-under" : "rcpt-none";
+          return `<span class="pill-rcpt ${cls}">${escAttr(raw)}</span>`;
         }
 
         function parseNumber(v) {
@@ -690,7 +785,7 @@
         }
 
         function sheetToRows(ws) {
-          return XLSX.utils.sheet_to_json(ws, { header: 1, raw: true, defval: null });
+          return XLSX.utils.sheet_to_json(ws, { header: 1, raw: false, dateNF: "dd/mm/yyyy", defval: null });
         }
 
         function findHeaderIndex(headers, needle) {
@@ -735,6 +830,8 @@
             const row = rows[r] || [];
             const inv = normalizeInvoiceNumber(row[invIdx]);
             if (!inv) continue;
+            const invLower = inv.trim().toLowerCase();
+            if (["sample size", "sample size:", "summary", "total", "count"].includes(invLower)) continue;
             const glAmount = amtIdx !== -1 ? parseNumber(row[amtIdx]) : null;
             out.push({
               source_sheet: sheetName,
@@ -750,14 +847,20 @@
         function refreshKpis() {
           kpiCount.textContent = String(loadedItems.length);
           kpiInvoices.textContent = String((invoiceFiles.files && invoiceFiles.files.length) || 0);
-          kpiBank.textContent = bankFile.files && bankFile.files[0] ? bankFile.files[0].name : "—";
+          kpiRemit.textContent = String((remittanceFiles.files && remittanceFiles.files.length) || 0);
+          if (bankFile.files && bankFile.files.length > 0) {
+            const n = bankFile.files.length;
+            kpiBank.textContent = n === 1 ? bankFile.files[0].name : `${n} PDFs`;
+          } else {
+            kpiBank.textContent = "—";
+          }
         }
 
         function renderTable(items, results) {
           resultsTbody.innerHTML = "";
           if (!items || items.length === 0) {
             const tr = document.createElement("tr");
-            tr.innerHTML = `<td colspan="9" style="color: var(--muted); font-size: 13px">Upload a workpaper to load sample items.</td>`;
+            tr.innerHTML = `<td colspan="23" style="color: var(--muted); font-size: 13px">Upload a workpaper to load sample items.</td>`;
             resultsTbody.appendChild(tr);
             return;
           }
@@ -774,24 +877,37 @@
 
             const glAmt = item.gl_amount_ex_gst;
             const invAmtEx = r.invoice_amount_ex_gst != null ? r.invoice_amount_ex_gst : null;
-            const variance = glAmt != null && invAmtEx != null ? invAmtEx - glAmt : null;
+            const variance = r.amount_variance != null ? r.amount_variance : glAmt != null && invAmtEx != null ? invAmtEx - glAmt : null;
 
             const tr = document.createElement("tr");
 
             const conf = r.match_confidence || "Medium";
             const bankMatch = r.bank_match || "No";
-            const bankDate = r.bank_receipt_date || "";
             const overall = r.overall_result || "Exception";
             const perf = r.performance_obligation || "";
             const perfIsStandard = isStandardPerfValue(perf) && perf !== "__CUSTOM__";
             const perfSelectValue = perfIsStandard ? perf : perf ? "__CUSTOM__" : "";
             const perfCustomValue = perfIsStandard ? "" : perf || "";
+            const auditorNotes = r.auditor_notes || "";
+            const gstCheckRequired = r.gst_check_required === true;
+
+            const lineSum = r.line_items_summary || "";
+            const lineSumShort = lineSum.length > 120 ? `${lineSum.slice(0, 120)}…` : lineSum;
 
             tr.innerHTML = `
-              <td class="mono">${item.invoice_number}</td>
+              <td class="mono">${escAttr(item.invoice_number)}</td>
               <td class="mono">${money(glAmt)}</td>
-              <td class="mono">${money(invAmtEx)}</td>
+              <td class="mono">${displayDatePlain(item.date ?? r.gl_date)}</td>
+              <td>${escAttr(item.customer ?? "")}</td>
+              <td class="mono">${escAttr(r.invoice_number_extracted ?? "")}</td>
+              <td class="mono">${displayDatePlain(r.invoice_date_extracted)}</td>
+              <td>${escAttr(r.invoice_customer_extracted ?? "")}</td>
+              <td class="mono">${money(r.invoice_amount_ex_gst != null ? r.invoice_amount_ex_gst : invAmtEx)}</td>
+              <td class="mono">${money(r.invoice_gst_amount)}</td>
+              <td class="mono">${money(r.invoice_total_inc_gst)}</td>
+              <td style="font-size: 13px; color: ${gstCheckRequired ? "#b45309" : "var(--muted)"}">${gstCheckRequired ? "Review" : "—"}</td>
               <td class="mono">${money(variance)}</td>
+              <td style="max-width: 280px; font-size: 12px; color: var(--muted)" title="${escAttr(lineSum)}">${escAttr(lineSumShort || "—")}</td>
               <td>
                 <select class="cell-select" data-field="bank_match">
                   <option ${bankMatch === "Yes" ? "selected" : ""}>Yes</option>
@@ -799,9 +915,19 @@
                   <option ${bankMatch === "Partial" ? "selected" : ""}>Partial</option>
                 </select>
               </td>
-              <td>
-                <input class="cell-input" data-field="bank_receipt_date" type="text" placeholder="YYYY-MM-DD" value="${bankDate || ""}" />
+              <td class="mono">
+                <input
+                  class="cell-input"
+                  data-field="bank_receipt_date"
+                  type="text"
+                  placeholder="DD/MM/YYYY"
+                  value="${escAttr(r.bank_receipt_date == null ? "" : formatDate(String(r.bank_receipt_date)))}"
+                />
               </td>
+              <td style="max-width: 220px; font-size: 12px">${escAttr(r.bank_description ?? "") || "—"}</td>
+              <td class="mono">${money(r.bank_credit_amount)}</td>
+              <td>${receiptVsPill(r.bank_receipt_vs_invoice)}</td>
+              <td style="font-size: 13px; color: var(--muted)">${r.document_type ? escAttr(String(r.document_type)) : "—"}</td>
               <td>
                 <select class="cell-select" data-field="match_confidence">
                   <option ${conf === "High" ? "selected" : ""}>High</option>
@@ -841,7 +967,7 @@
                     data-perf="custom"
                     type="text"
                     placeholder="Enter custom comment…"
-                    value="${perfCustomValue}"
+                    value="${escAttr(perfCustomValue)}"
                     style="${perfSelectValue === "__CUSTOM__" ? "" : "display: none;"}"
                   />
                 </div>
@@ -853,11 +979,14 @@
                   <option ${overall === "Exception" ? "selected" : ""}>Exception</option>
                 </select>
               </td>
+              <td>
+                <input class="cell-input" data-field="auditor_notes" type="text" placeholder="Notes…" value="${escAttr(auditorNotes)}" />
+              </td>
             `;
 
             // Persist overrides directly into aiResults
             tr.querySelectorAll("[data-field]").forEach((el) => {
-              el.addEventListener("change", () => {
+              function syncField() {
                 if (!aiResults || !Array.isArray(aiResults.results)) return;
                 const inv = item.invoice_number;
                 const idx = aiResults.results.findIndex((x) => String(x.invoice_number || "").trim() === inv);
@@ -865,7 +994,9 @@
                 const field = el.getAttribute("data-field");
                 aiResults.results[idx][field] = el.value;
                 aiResults.results[idx].overridden = true;
-              });
+              }
+              el.addEventListener("change", syncField);
+              if (el.tagName === "INPUT" && el.type === "text") el.addEventListener("input", syncField);
             });
 
             // Performance obligation: dropdown + optional custom text, stored into performance_obligation
@@ -943,28 +1074,56 @@
           const wb = XLSX.utils.book_new();
           const rows = [];
           rows.push([
-            "Invoice Number",
+            "Invoice Number (GL)",
             "GL Amount (ex GST)",
-            "Invoice Amount (ex GST)",
-            "Variance",
+            "GL Date",
+            "GL Customer",
+            "Invoice Number Extracted",
+            "Invoice Date Extracted",
+            "Invoice Customer Extracted",
+            "Invoice Amount ex GST (SubTotal / OCR / inc÷1.1)",
+            "Invoice GST Amount (TotalTax or inc − ex)",
+            "Invoice Total (inc GST)",
+            "GST check required (inc÷ex ≈ 1.1 ±5%)",
+            "Amount Variance (GL vs Invoice ex GST)",
+            "Line Items Summary",
             "Bank Match",
             "Bank Receipt Date",
+            "Bank Description",
+            "Bank Credit Amount",
+            "Bank Receipt vs Invoice",
+            "Document Type",
             "Match Confidence",
             "Performance Obligation",
-            "Overall Result",
+            "Overall Result (Pass/Fail/Exception)",
+            "Auditor Notes",
           ]);
 
           for (const r of results.results || []) {
             rows.push([
               r.invoice_number || "",
               r.gl_amount_ex_gst ?? "",
-              r.invoice_amount_ex_gst ?? "",
-              r.variance ?? "",
+              r.gl_date ?? "",
+              r.gl_customer ?? "",
+              r.invoice_number_extracted ?? "",
+              r.invoice_date_extracted ?? "",
+              r.invoice_customer_extracted ?? "",
+              r.invoice_amount_ex_gst ?? r.invoice_subtotal_ex_gst ?? "",
+              r.invoice_gst_amount ?? "",
+              r.invoice_total_inc_gst ?? "",
+              r.gst_check_required === true ? "Yes" : "",
+              r.amount_variance ?? r.variance ?? "",
+              r.line_items_summary ?? "",
               r.bank_match || "",
               r.bank_receipt_date || "",
+              r.bank_description ?? "",
+              r.bank_credit_amount ?? "",
+              r.bank_receipt_vs_invoice ?? "",
+              r.document_type || "",
               r.match_confidence || "",
               r.performance_obligation || "",
               r.overall_result || "",
+              r.auditor_notes ?? "",
             ]);
           }
 
@@ -1005,6 +1164,11 @@
           runAiBtn.disabled = !canRunAi();
         });
 
+        remittanceFiles.addEventListener("change", () => {
+          refreshKpis();
+          runAiBtn.disabled = !canRunAi();
+        });
+
         bankFile.addEventListener("change", () => {
           refreshKpis();
           runAiBtn.disabled = !canRunAi();
@@ -1013,6 +1177,7 @@
         clearBtn.addEventListener("click", () => {
           workpaperFile.value = "";
           invoiceFiles.value = "";
+          remittanceFiles.value = "";
           bankFile.value = "";
           loadedItems = [];
           aiResults = null;
@@ -1037,7 +1202,7 @@
 
         runAiBtn.addEventListener("click", async () => {
           if (!canRunAi()) {
-            setStatus("warn", "Upload workpaper, invoices (batch), and bank statement before running AI testing.");
+            setStatus("warn", "Upload workpaper, invoices (batch), and at least one bank statement PDF before running AI testing.");
             return;
           }
 
@@ -1048,7 +1213,10 @@
             const fd = new FormData();
             fd.append("workpaper", workpaperFile.files[0]);
             for (const f of invoiceFiles.files) fd.append("invoices", f);
-            fd.append("bank_statement", bankFile.files[0]);
+            if (remittanceFiles.files && remittanceFiles.files.length > 0) {
+              for (const rf of remittanceFiles.files) fd.append("remittance_files", rf);
+            }
+            for (const bf of bankFile.files) fd.append("bank_statements", bf);
 
             const res = await fetch("/test-documents", { method: "POST", body: fd });
             if (!res.ok) {
